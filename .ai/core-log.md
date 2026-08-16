@@ -546,3 +546,43 @@ Pull current Audio `main` and treat `a5d7606` as the executable build hash. Run 
 - [ ] Passed — timing closure and the full D3 MiSTer regression matrix are pending
 
 ---
+## 016 COMMIT D3 a5d7606 2026-08-16T15:51:00-07:00
+
+#### Coming From:
+
+D3 a5d7606
+
+#### Purpose:
+
+Record the user-reported successful D3 functional regression for the CDC-corrected build, analyze the pushed Quartus/STA evidence, complete result cleanup and main-project compatibility review, and define a diagnostic boundary for the remaining setup-timing failure before attempting another RTL correction.
+
+#### Outcome:
+
+The user reports that all requested MiSTer tests pass for official executable source `a5d760697c8417b492b30d396ed2276702718aae`: supported FLAC anchors, repeated unsupported 24-bit no-crash/no-USER behavior followed by supported reload, reset/re-arm, all four D2 Audio Test modes, and standing MPEG/video regressions.
+
+Build-results commit `a1dbba4eddeed0ef6705669766e6224d6e222a1a` (`2b002bd build update`) fits successfully with Quartus Prime 17.0.2 Build 602 on `5CSEBA6U23I7`: 32,308 ALMs, 44,647 registers, 472,097 block-memory bits in 75 RAM blocks, 68 DSPs, and 3 PLLs. Relative to D0, this is +526 ALMs, +835 registers, +10,752 memory bits, +2 RAM blocks, with no DSP or PLL increase.
+
+The approved CDC correction fixes the previously observed recovery failure: `general[2]` recovery is +15.459 ns with endpoint TNS 0. Global setup still fails at -1.700 ns with endpoint TNS -8.318 ns on `general[2]`, so D3 remains open despite the clean hardware regression. The pushed result set does not contain the detailed all-launch-clock `phase1p_decoder_setup.rpt` needed to identify the launch node/clock and destination endpoint of the remaining setup violation; the available compact summary is therefore insufficient to justify another RTL or SDC change.
+
+Workflow step 8 is already complete in `ed831b0325c15155787acd5f025f4f1057bc7916` (`(a5d7606) clear build results`), which removes the inspected generated contents of root `output_files/` and `phase1p_timing_reports/` without changing executable source.
+
+Workflow step 9 is complete against current MiSTer-Media-Player. Its latest metadata tip is `c9ce64ace3cc7b94cd39b5e33d593ef7e2526a87`; current functional source is `eb80c7b39a1d1abc4535aab3e87484d1b7bdf02f` (`Generalize B macroblock address increments`). Comparison from Audio fork point `bc37008` shows no main-side change to `MediaPlayer_top_00.svh` or `MediaPlayer_top_07.svh`; `files.qip` remains the only overlapping integration file, with two main-side additions that must be merged rather than overwritten during eventual reintegration. No immediate main-project conflict blocks D3 timing diagnosis.
+
+Proposed next boundary: modify only `tools/phase1p_timing.tcl` to emit a compact, Git-friendly text report for the worst setup paths ending in the 54 MHz `general[2]` domain. The report must capture at minimum slack, launch clock, source node, destination node, and whether each path is 54->54 or a cross-clock relationship. Preserve all existing timing reports and do not change RTL, QIP, PLL configuration, or `MediaPlayer.sdc`. This is diagnostic instrumentation only; it must not alter the FPGA executable.
+
+Validation after approval: pull the diagnostic commit and rerun `quartus_sta -t tools/phase1p_timing.tcl` against the existing fitted `a5d7606` design if the local fit database is still available; otherwise perform a clean compile first. Push the resulting compact text report in `phase1p_timing_reports/` and report completion. No additional MiSTer hardware regression is required for this diagnostic-only commit because the FPGA executable is unchanged. The resulting path evidence will determine a separately proposed timing-fix boundary; do not alter SDC or RTL until that evidence is reviewed.
+
+#### Next Steps:
+
+Await explicit user approval. If approved, implement only the `tools/phase1p_timing.tcl` compact setup-path diagnostic and commit it. D3 remains open until global setup reaches non-negative slack with zero endpoint TNS.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — Quartus fit succeeds and the complete requested MiSTer functional matrix passes; CDC recovery timing is clean
+- [ ] Passed — D3 remains open because global 54 MHz setup is -1.700 ns / -8.318 ns TNS; detailed path localization awaits approval
+
+---
