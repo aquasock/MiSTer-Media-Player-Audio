@@ -209,19 +209,18 @@ wire reset_video = reset_video_sync[2];
 
 // kate - D3 extends the D2 Audio-only reset boundary to FLAC file starts.
 // HPS is held with ioctl_wait while the shared Audio path and compressed FIFO
-// are cleared, so the first F2 byte cannot race the reset.  Download completion
-// is separately latched for exact-final-byte EOS after the compressed FIFO drains.
+// are cleared, so the first F2 byte cannot race the reset.  D3 timing closure
+// carries restart/mode/EOS control through dedicated tiny DCFIFOs instead of
+// using the clk_sys restart level as an asynchronous reset in other domains.
 wire [2:0] audio_test_mode = status[3:1];
 reg  [2:0] audio_test_mode_prev;
 reg  [4:0] audio_reset_stretch;
-reg        audio_flac_eos_sys;
 
 always @(posedge clk_sys or posedge reset_request) begin
 	if (reset_request) begin
-		audio_test_mode_prev  <= 3'd0;
+		audio_test_mode_prev     <= 3'd0;
 		audio_flac_download_prev <= 1'b0;
-		audio_reset_stretch   <= 5'd0;
-		audio_flac_eos_sys    <= 1'b0;
+		audio_reset_stretch      <= 5'd0;
 	end
 	else begin
 		audio_test_mode_prev     <= audio_test_mode;
@@ -231,50 +230,197 @@ always @(posedge clk_sys or posedge reset_request) begin
 			audio_reset_stretch <= 5'd31;
 		else if (audio_reset_stretch != 5'd0)
 			audio_reset_stretch <= audio_reset_stretch - 5'd1;
-
-		if (audio_flac_stream_start)
-			audio_flac_eos_sys <= 1'b0;
-		else if (audio_flac_download_prev && !audio_flac_download_active)
-			audio_flac_eos_sys <= 1'b1;
 	end
 end
 
-assign audio_input_reset_active = audio_flac_stream_start || (audio_reset_stretch != 5'd0);
-wire audio_reset_request = reset_request | audio_input_reset_active;
+wire audio_restart_event_sys =
+	(audio_test_mode != audio_test_mode_prev) || audio_flac_stream_start;
+wire audio_eos_event_sys =
+	audio_flac_download_prev && !audio_flac_download_active;
+assign audio_input_reset_active =
+	audio_flac_stream_start || (audio_reset_stretch != 5'd0);
 
-(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
-reg [2:0] reset_audio_src_sync;
-(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
-reg [2:0] reset_audio_out_sync;
-(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
-reg [2:0] audio_mode_meta;
+// The two data FIFOs intentionally retain asynchronous clear: Altera dcfifo
+// synchronizes clear release independently in both clock domains.  No ordinary
+// Audio register below uses this cross-domain restart level as an async control.
+wire audio_fifo_reset_request = reset_request | audio_input_reset_active;
+
+// Queue sparse control events until both required destination FIFOs can accept
+// them.  A restart token carries the new Audio Test mode; an EOS token is
+// latched by clk_mpeg2 and is still qualified by compressed-FIFO empty.
+wire [7:0] audio_control_event_data =
+	{3'b000, audio_restart_event_sys, audio_eos_event_sys, audio_test_mode};
+wire       audio_control_event_sys =
+	audio_restart_event_sys || audio_eos_event_sys;
+reg  [7:0] audio_control_pending_data;
+reg        audio_control_pending_valid;
+wire       audio_control_src_full;
+wire       audio_control_src_empty;
+wire [7:0] audio_control_src_data;
+wire       audio_control_src_wr;
+wire       audio_control_src_rd;
+wire       audio_restart_out_full;
+wire       audio_restart_out_empty;
+wire       audio_restart_out_data;
+wire       audio_restart_out_wr;
+wire       audio_restart_out_rd;
+
+wire audio_control_send =
+	audio_control_pending_valid &&
+	!audio_control_src_full &&
+	(!audio_control_pending_data[4] || !audio_restart_out_full);
+
+assign audio_control_src_wr = audio_control_send;
+assign audio_restart_out_wr =
+	audio_control_send && audio_control_pending_data[4];
+
+always @(posedge clk_sys or posedge reset_request) begin
+	if (reset_request) begin
+		audio_control_pending_data  <= 8'd0;
+		audio_control_pending_valid <= 1'b0;
+	end
+	else if (audio_control_pending_valid) begin
+		if (audio_control_send) begin
+			if (audio_control_event_sys) begin
+				audio_control_pending_data  <= audio_control_event_data;
+				audio_control_pending_valid <= 1'b1;
+			end
+			else begin
+				audio_control_pending_valid <= 1'b0;
+			end
+		end
+		else if (audio_control_event_sys) begin
+			audio_control_pending_data[4] <=
+				audio_control_pending_data[4] | audio_restart_event_sys;
+			audio_control_pending_data[3] <=
+				audio_control_pending_data[3] | audio_eos_event_sys;
+			if (audio_restart_event_sys)
+				audio_control_pending_data[2:0] <= audio_test_mode;
+		end
+	end
+	else if (audio_control_event_sys) begin
+		audio_control_pending_data  <= audio_control_event_data;
+		audio_control_pending_valid <= 1'b1;
+	end
+end
+
+// clk_sys -> clk_mpeg2 control mailbox.  Logic-cell storage keeps the tiny
+// mailbox from consuming an M10K while retaining dcfifo's CDC implementation.
+dcfifo #(
+	.lpm_numwords         (4),
+	.lpm_showahead        ("ON"),
+	.lpm_type             ("dcfifo"),
+	.lpm_width            (8),
+	.lpm_widthu           (2),
+	.overflow_checking    ("ON"),
+	.underflow_checking   ("ON"),
+	.use_eab              ("OFF"),
+	.rdsync_delaypipe     (4),
+	.wrsync_delaypipe     (4),
+	.write_aclr_synch     ("ON"),
+	.read_aclr_synch      ("ON")
+) audio_control_src_fifo
+(
+	.aclr    (reset_request),
+	.data    (audio_control_pending_data),
+	.wrclk   (clk_sys),
+	.wrreq   (audio_control_src_wr),
+	.wrfull  (audio_control_src_full),
+	.q       (audio_control_src_data),
+	.rdclk   (clk_mpeg2),
+	.rdreq   (audio_control_src_rd),
+	.rdempty (audio_control_src_empty)
+);
+
+// A second one-bit mailbox gives CLK_AUDIO the same restart event without a
+// direct related-clock timing path from clk_sys.
+dcfifo #(
+	.lpm_numwords         (4),
+	.lpm_showahead        ("ON"),
+	.lpm_type             ("dcfifo"),
+	.lpm_width            (1),
+	.lpm_widthu           (2),
+	.overflow_checking    ("ON"),
+	.underflow_checking   ("ON"),
+	.use_eab              ("OFF"),
+	.rdsync_delaypipe     (4),
+	.wrsync_delaypipe     (4),
+	.write_aclr_synch     ("ON"),
+	.read_aclr_synch      ("ON")
+) audio_restart_out_fifo
+(
+	.aclr    (reset_request),
+	.data    (1'b1),
+	.wrclk   (clk_sys),
+	.wrreq   (audio_restart_out_wr),
+	.wrfull  (audio_restart_out_full),
+	.q       (audio_restart_out_data),
+	.rdclk   (CLK_AUDIO),
+	.rdreq   (audio_restart_out_rd),
+	.rdempty (audio_restart_out_empty)
+);
+
+assign audio_control_src_rd = !audio_control_src_empty;
+assign audio_restart_out_rd = !audio_restart_out_empty;
+
+// All ordinary Audio source state now resets synchronously in clk_mpeg2.
+// The system reset already arrives through reset_mpeg2; restart tokens extend
+// that local reset for several decoder clocks and atomically install the mode.
+reg [2:0] audio_src_reset_count;
 reg [2:0] audio_mode_src;
-reg [1:0] audio_flac_eos_sync;
+reg       audio_flac_eos_src;
 
-always @(posedge clk_mpeg2 or posedge audio_reset_request) begin
-	if (audio_reset_request) begin
-		reset_audio_src_sync <= 3'b111;
-		audio_mode_meta      <= 3'd0;
-		audio_mode_src       <= 3'd0;
-		audio_flac_eos_sync  <= 2'b00;
+always @(posedge clk_mpeg2) begin
+	if (reset_mpeg2) begin
+		audio_src_reset_count <= 3'd7;
+		audio_mode_src        <= 3'd0;
+		audio_flac_eos_src    <= 1'b0;
 	end
 	else begin
-		reset_audio_src_sync <= {reset_audio_src_sync[1:0], 1'b0};
-		audio_mode_meta      <= audio_test_mode;
-		audio_mode_src       <= audio_mode_meta;
-		audio_flac_eos_sync  <= {audio_flac_eos_sync[0], audio_flac_eos_sys};
+		if (audio_src_reset_count != 3'd0)
+			audio_src_reset_count <= audio_src_reset_count - 3'd1;
+
+		if (!audio_control_src_empty) begin
+			if (audio_control_src_data[4]) begin
+				audio_src_reset_count <= 3'd7;
+				audio_mode_src        <= audio_control_src_data[2:0];
+				audio_flac_eos_src    <= 1'b0;
+			end
+			if (audio_control_src_data[3])
+				audio_flac_eos_src <= 1'b1;
+		end
 	end
 end
 
-always @(posedge CLK_AUDIO or posedge audio_reset_request) begin
-	if (audio_reset_request)
+wire reset_audio_src =
+	reset_mpeg2 || (audio_src_reset_count != 3'd0);
+
+// Keep only the established system-reset synchronizer asynchronous in the
+// 24.576 MHz output domain; Audio restart itself arrives through the mailbox.
+(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
+reg [2:0] reset_audio_out_sync;
+reg [2:0] audio_out_reset_count;
+
+always @(posedge CLK_AUDIO or posedge reset_request) begin
+	if (reset_request)
 		reset_audio_out_sync <= 3'b111;
 	else
 		reset_audio_out_sync <= {reset_audio_out_sync[1:0], 1'b0};
 end
 
-wire reset_audio_src = reset_audio_src_sync[2];
-wire reset_audio_out = reset_audio_out_sync[2];
+wire reset_audio_out_system = reset_audio_out_sync[2];
+
+always @(posedge CLK_AUDIO) begin
+	if (reset_audio_out_system)
+		audio_out_reset_count <= 3'd7;
+	else if (!audio_restart_out_empty)
+		audio_out_reset_count <= 3'd7;
+	else if (audio_out_reset_count != 3'd0)
+		audio_out_reset_count <= audio_out_reset_count - 3'd1;
+end
+
+wire reset_audio_out =
+	reset_audio_out_system || (audio_out_reset_count != 3'd0);
 
 // kate - D3 codec-independent PCM mux.  D2 diagnostic modes override the FLAC
 // source when selected; Off exposes the real decoder to the already-proven PCM
@@ -308,7 +454,7 @@ wire               audio_flac_eos_ok;
 wire               audio_flac_clean_reject;
 wire               audio_flac_stream_error;
 wire               audio_test_selected = (audio_mode_src != 3'd0);
-wire               audio_flac_input_eos = audio_flac_eos_sync[1] && audio_flac_stream_empty;
+wire               audio_flac_input_eos = audio_flac_eos_src && audio_flac_stream_empty;
 
 assign audio_pcm_ready = !audio_pcm_fifo_full;
 assign audio_test_pcm_ready = audio_test_selected && audio_pcm_ready;
@@ -354,7 +500,7 @@ audio_flac_constant_decoder audio_flac_constant_decoder
 
 audio_pcm_fifo audio_pcm_fifo
 (
-	.reset    (audio_reset_request),
+	.reset    (audio_fifo_reset_request),
 	.wr_clk   (clk_mpeg2),
 	.wr_data  ({audio_pcm_rate_48k, audio_pcm_stereo, audio_pcm_left, audio_pcm_right}),
 	.wr_en    (audio_pcm_valid && audio_pcm_ready),
@@ -392,7 +538,7 @@ assign audio_flac_stream_rd =
 
 audio_flac_stream_fifo audio_flac_stream_fifo
 (
-	.reset    (audio_reset_request),
+	.reset    (audio_fifo_reset_request),
 	.wr_clk   (clk_sys),
 	.wr_data  (audio_flac_stream_wr ? ioctl_dout : 8'd0),
 	.wr_en    (audio_flac_stream_wr),
