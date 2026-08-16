@@ -71,7 +71,7 @@ assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 localparam CONF_STR = {
 	"MediaPlayer;;",
 	"F1,M2V,Open MPEG-2 Video;",
-	"F2,FLAC,Open FLAC Audio;",
+	"F2,FL*,Open FLAC Audio;",
 	"-;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
