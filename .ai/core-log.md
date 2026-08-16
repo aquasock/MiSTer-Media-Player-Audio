@@ -512,3 +512,37 @@ Await explicit user approval. If approved, implement the `MediaPlayer_top_00.svh
 - [ ] Passed — D3 remains open because global setup and Audio recovery timing violate; corrective CDC source work awaits approval
 
 ---
+## 015 COMMIT D3 a5d7606 2026-08-16T14:47:11-07:00
+
+#### Coming From:
+
+D3 b651ab4
+
+#### Purpose:
+
+Implement the approved D3 Audio reset/control CDC timing correction without changing the hardware-passing FLAC decoder, terminal-drain behavior, F2 data transport semantics, PCM contract, MPEG/video logic, or timing constraints.
+
+#### Outcome:
+
+Exact GitHub source commit `a5d760697c8417b492b30d396ed2276702718aae` (`Close D3 Audio control CDC`) modifies only `MediaPlayer_top_00.svh`. No decoder, verifier, QIP, DDR, PLL, MPEG/video, or SDC file changed. `a5d7606` is the official D3 build hash for this timing-correction cycle.
+
+The previous cross-domain Audio restart level is no longer used as an asynchronous reset for ordinary `clk_mpeg2` or `CLK_AUDIO` state. Sparse restart/mode/EOS control events are queued in `clk_sys` and transferred through two small `dcfifo` mailboxes implemented with `USE_EAB="OFF"`: an 8-bit control mailbox to `clk_mpeg2` and a one-bit restart mailbox to `CLK_AUDIO`. Restart tokens atomically carry the selected D2 Audio Test mode, while EOS is latched in `clk_mpeg2` and remains qualified by compressed-FIFO empty before reaching the FLAC decoder.
+
+Audio source state now resets synchronously under `reset_mpeg2` or a destination-local restart counter. The 24.576 MHz output adapter retains only the established system-reset release synchronizer; Audio restart is converted to a destination-local synchronous reset counter. The existing compressed FLAC and PCM data FIFOs retain their Altera `dcfifo` asynchronous clear with synchronized release, preserving the 31-`clk_sys` first-byte hold/flush behavior while removing the STA-identified direct recovery-sensitive paths from `audio_reset_stretch`/`ioctl_index` into ordinary Audio registers.
+
+This source has been reviewed against the approved one-file boundary and the commit diff contains no unrelated file changes. The assistant environment does not contain Quartus/SystemVerilog simulation tools, so compilation and timing closure are deliberately not claimed here.
+
+#### Next Steps:
+
+Pull current Audio `main` and treat `a5d7606` as the executable build hash. Run `python3 tools/streams/verify_d3_flac_constant.py`, remove prior `db/`, `incremental_db/`, `output_files/`, and `phase1p_timing_reports/` products as appropriate, then run a clean `quartus_sh --flow compile MediaPlayer` followed by `quartus_sta -t tools/phase1p_timing.tcl`. Require non-negative global setup and recovery slack with zero endpoint TNS, zero focused decoder/video setup violations, and no regression in hold/removal/minimum-pulse timing. On MiSTer, repeat both supported FLAC anchors, repeated unsupported-24-bit no-crash/no-USER followed immediately by supported reload, reset/re-arm, all four D2 Audio Test modes, and standing MPEG/video regressions. Push the resulting root `output_files/` and `phase1p_timing_reports/` contents and report the result.
+
+#### Files Modified:
+
+- `MediaPlayer_top_00.svh`
+
+#### Status:
+
+- [ ] Built — approved CDC source correction is committed as `a5d7606`; clean Quartus/STA validation is pending
+- [ ] Passed — timing closure and the full D3 MiSTer regression matrix are pending
+
+---
