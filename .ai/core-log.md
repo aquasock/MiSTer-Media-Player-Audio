@@ -146,7 +146,7 @@ Preserve this D1 corpus as the deterministic reference infrastructure. The next 
 - [x] Passed — tracked manifest regenerates exactly and fail-closed verification passes for 27 valid/unsupported cases, 2 invalid cases, and 8 transport profiles
 
 ---
-## 005 PLAN D2 2ca7be5 2026-08-16T05:09:00-07:00
+## 005 COMMIT D2 081c006 2026-08-16T05:16:26-07:00
 
 #### Coming From:
 
@@ -154,27 +154,42 @@ D1 2ca7be5
 
 #### Purpose:
 
-Implement the approved D2 codec-independent PCM/output proof before FLAC decoder integration. Prove signed 16-bit mono/stereo 44.1/48 kHz sample transport, deterministic valid/ready backpressure and re-arm behavior, clock-domain-safe buffering from the decoder-side clock domain into MiSTer's 24.576 MHz audio domain, and real MiSTer AUDIO_L/AUDIO_R output without changing video decoding or adding compressed-audio RTL.
+Implement the codec-independent PCM/output proof before FLAC decoder integration: signed 16-bit mono/stereo at 44.1/48 kHz, deterministic valid/ready backpressure, clean stream re-arm on Audio Test mode changes, clock-domain-safe buffering into MiSTer's 24.576 MHz audio domain, and direct signed AUDIO_L/AUDIO_R output without modifying the MPEG-2 video decoder or adding compressed-audio RTL.
 
 #### Outcome:
 
-The approved D2 source boundary is limited to a small sibling Audio path: a deterministic PCM test producer in `clk_mpeg2`, a dual-clock on-chip FIFO, and a MiSTer output adapter clocked from `CLK_AUDIO`. The output adapter will use an integer phase accumulator so 48 kHz is exact at one sample per 512 audio clocks and 44.1 kHz has exact long-term rate with bounded one-audio-clock scheduling jitter. Four selectable proof modes will cover 44.1 kHz mono/stereo and 48 kHz mono/stereo; Off remains the default. Mode changes will stretch an Audio-local reset request so producer, FIFO, and output adapter re-arm cleanly without perturbing the MPEG/video reset or stream-readiness path.
+The approved D2 source boundary spans three sequential GitHub `main` commits: `bfc4273390437139de4adc7194b3507b0ec1413b` (`Add D2 PCM test source`), `95eedbcfbbcad305b2f822485b60e525b8f97f1f` (`Add D2 PCM CDC FIFO`), and integration commit `081c006c8d8f6876493642ad1bc228c9261730f7` (`Integrate D2 PCM output proof`). Comparison from the approved D2 plan boundary `0c48eeb39ef448105e6af202e3ea46f36d29c645` through `081c006` shows exactly six intended paths: `MediaPlayer_top_00.svh`, `files.qip`, three new `rtl/audio/` modules, and `tools/streams/verify_d2_pcm_path.py`. No H.262 decoder, video presentation, DDR, PLL, SDC, compressed-audio, or FLAC implementation file changes.
 
-The deterministic source will advance its waveform state only on `valid && ready`, so FIFO backpressure cannot lose or duplicate producer samples. Mono is represented explicitly and duplicated only by the MiSTer output adapter; stereo uses distinct left/right deterministic tones so channel ordering is observable. D2 will preserve `AUDIO_S=1` signed-sample semantics and `AUDIO_MIX=0`.
+The PCM producer runs in `clk_mpeg2` and exposes stable valid/ready sample data; its phase state advances only on `valid && ready`, so FIFO backpressure cannot alter the accepted sample sequence. Modes 1-4 provide 44.1 kHz mono, 44.1 kHz stereo, 48 kHz mono, and 48 kHz stereo deterministic square-wave proof streams. The left channel is approximately 440 Hz, stereo right is approximately 660 Hz, mono duplication occurs only in the output adapter, and MiSTer output uses `AUDIO_S=1` with `AUDIO_MIX=0`.
 
-The implementation will add a deterministic software checker for the producer sequence, valid/ready invariance, mono duplication, channel ordering, and 44.1/48 kHz phase-accumulator scheduling. Quartus compilation, timing/resource delta versus D0, and real MiSTer audible/LED validation remain the user hardware-validation boundary after the source commit.
+A 256-word x 34-bit DCFIFO transfers `{rate_48k, stereo, left, right}` from `clk_mpeg2` to `CLK_AUDIO` using synchronized asynchronous-clear release. Audio Test mode changes on `status[3:1]` generate a stretched Audio-only reset request and independently synchronized release into the source and output domains; MPEG reset/readiness is not coupled to Audio readiness.
+
+The output adapter uses the existing MiSTer `CLK_AUDIO` 24.576 MHz clock. 48 kHz is exact at one sample every 512 clocks. The 44.1 kHz integer accumulator produces exact long-term rate with deterministic 557/558-clock sample intervals. A real FIFO underrun forces silence and sets a sticky internal diagnostic.
+
+The deterministic checker was run locally after the integrated source was staged and reports `D2 PCM VERIFY PASS`. For each of the four modes it pins an 8192-sample PCM SHA-256, proves accepted PCM is identical under continuous, periodic, bursty, and deterministic pseudorandom-like ready patterns, proves reset/re-arm reproduces the exact independent stream start, verifies 48 kHz `/512` scheduling, and verifies the 44.1 kHz 557/558-clock scheduling signature.
+
+Quartus compilation, post-fit resource/timing delta versus the accepted D0 denominator, and physical MiSTer audio-output behavior have not yet been validated. D2 therefore remains open at the hardware-validation boundary.
 
 #### Next Steps:
 
-Publish the focused D2 implementation, run the deterministic software checker, verify the source diff contains no FLAC/video/DDR/PLL changes, record the exact source commit in this log, then have the user pull, clean-build, and exercise all four Audio Test modes on MiSTer before D2 is accepted.
+1. Pull current Audio `main` and run `python3 tools/streams/verify_d2_pcm_path.py`; expect `D2 PCM VERIFY PASS`.
+2. Remove `db/`, `incremental_db/`, and `output_files/`, then run `quartus_sh --flow compile MediaPlayer` and `quartus_sta -t tools/phase1p_timing.tcl`.
+3. Load the resulting core on the standard MiSTer target and exercise Audio Test: Off, 44.1k Mono, 44.1k Stereo, 48k Mono, and 48k Stereo. Confirm Off is silent; all four active modes are stable; mono is centered/equal L/R; stereo has the distinct lower-frequency left and higher-frequency right tones; repeated mode changes and reset re-arm cleanly; and existing MPEG/video behavior remains unchanged.
+4. Push `081c006_build_logs.tar.gz` plus any D2 test notes/resources into `.ai/current_results/` and report the hardware results.
+5. Compare ALMs, registers, RAM blocks/bits, DSPs, PLLs, global/focused timing, and structural warnings against D0 before closing D2 or proceeding to FLAC RTL.
 
 #### Files Modified:
 
-- `.ai/core-log.md`
+- `MediaPlayer_top_00.svh`
+- `files.qip`
+- `rtl/audio/audio_pcm_test_source.sv`
+- `rtl/audio/audio_pcm_fifo.sv`
+- `rtl/audio/audio_pcm_output_adapter.sv`
+- `tools/streams/verify_d2_pcm_path.py`
 
 #### Status:
 
-- [ ] Built — D2 implementation not yet committed or Quartus-built
-- [x] Passed — D2 implementation boundary explicitly approved by the user
+- [ ] Built — deterministic D2 software verification passes; clean Quartus build/resource/timing evidence is pending
+- [ ] Passed — MiSTer validation of all four PCM modes, re-arm behavior, and video non-regression is pending
 
 ---
