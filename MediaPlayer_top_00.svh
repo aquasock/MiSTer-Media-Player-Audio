@@ -71,6 +71,7 @@ assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 localparam CONF_STR = {
 	"MediaPlayer;;",
 	"F1,M2V,Open MPEG-2 Video;",
+	"F2,FLAC,Open FLAC Audio;",
 	"-;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
@@ -110,6 +111,19 @@ wire        mpeg2_new_decoder_stream_ready;
 wire        mpeg2_new_b_presentation_hold;
 wire        mpeg2_new_p_destination_ownership_hold;
 
+// kate - D3 sibling compressed-audio transport.  F1 remains video-only; F2
+// owns a separate HPS->FLAC FIFO and never enters the H.262 frontend.
+wire        audio_flac_stream_full;
+wire        audio_flac_stream_empty;
+wire [7:0]  audio_flac_stream_data;
+wire        audio_flac_stream_rd;
+wire        audio_flac_stream_wr;
+wire        audio_flac_input_ready;
+wire        audio_input_reset_active;
+wire        audio_flac_download_active = ioctl_download && (ioctl_index[5:0] == 6'd2);
+reg         audio_flac_download_prev;
+wire        audio_flac_stream_start = audio_flac_download_active && !audio_flac_download_prev;
+
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
 	.clk_sys(clk_sys),
@@ -130,7 +144,11 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 
-	.ioctl_wait(ioctl_download && mpeg2_stream_full)
+	.ioctl_wait(
+		ioctl_download &&
+		(((ioctl_index[5:0] == 6'd1) && mpeg2_stream_full) ||
+		 ((ioctl_index[5:0] == 6'd2) && (audio_flac_stream_full || audio_input_reset_active)))
+	)
 );
 
 ///////////////////////   CLOCKS   ///////////////////////////////
@@ -189,28 +207,40 @@ end
 wire reset_mpeg2 = reset_mpeg2_sync[2];
 wire reset_video = reset_video_sync[2];
 
-// kate - D2 Audio reset/CDC proof.  status[3:1] is owned by clk_sys.  Any mode
-// change stretches an Audio-only reset request so the producer, DCFIFO, and
-// CLK_AUDIO adapter all re-arm as one stream without perturbing MPEG readiness.
+// kate - D3 extends the D2 Audio-only reset boundary to FLAC file starts.
+// HPS is held with ioctl_wait while the shared Audio path and compressed FIFO
+// are cleared, so the first F2 byte cannot race the reset.  Download completion
+// is separately latched for exact-final-byte EOS after the compressed FIFO drains.
 wire [2:0] audio_test_mode = status[3:1];
 reg  [2:0] audio_test_mode_prev;
 reg  [4:0] audio_reset_stretch;
+reg        audio_flac_eos_sys;
 
 always @(posedge clk_sys or posedge reset_request) begin
 	if (reset_request) begin
-		audio_test_mode_prev <= 3'd0;
-		audio_reset_stretch  <= 5'd0;
+		audio_test_mode_prev  <= 3'd0;
+		audio_flac_download_prev <= 1'b0;
+		audio_reset_stretch   <= 5'd0;
+		audio_flac_eos_sys    <= 1'b0;
 	end
 	else begin
-		audio_test_mode_prev <= audio_test_mode;
-		if (audio_test_mode != audio_test_mode_prev)
+		audio_test_mode_prev     <= audio_test_mode;
+		audio_flac_download_prev <= audio_flac_download_active;
+
+		if ((audio_test_mode != audio_test_mode_prev) || audio_flac_stream_start)
 			audio_reset_stretch <= 5'd31;
 		else if (audio_reset_stretch != 5'd0)
 			audio_reset_stretch <= audio_reset_stretch - 5'd1;
+
+		if (audio_flac_stream_start)
+			audio_flac_eos_sys <= 1'b0;
+		else if (audio_flac_download_prev && !audio_flac_download_active)
+			audio_flac_eos_sys <= 1'b1;
 	end
 end
 
-wire audio_reset_request = reset_request | (audio_reset_stretch != 5'd0);
+assign audio_input_reset_active = audio_flac_stream_start || (audio_reset_stretch != 5'd0);
+wire audio_reset_request = reset_request | audio_input_reset_active;
 
 (* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
 reg [2:0] reset_audio_src_sync;
@@ -219,17 +249,20 @@ reg [2:0] reset_audio_out_sync;
 (* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
 reg [2:0] audio_mode_meta;
 reg [2:0] audio_mode_src;
+reg [1:0] audio_flac_eos_sync;
 
 always @(posedge clk_mpeg2 or posedge audio_reset_request) begin
 	if (audio_reset_request) begin
 		reset_audio_src_sync <= 3'b111;
 		audio_mode_meta      <= 3'd0;
 		audio_mode_src       <= 3'd0;
+		audio_flac_eos_sync  <= 2'b00;
 	end
 	else begin
 		reset_audio_src_sync <= {reset_audio_src_sync[1:0], 1'b0};
 		audio_mode_meta      <= audio_test_mode;
 		audio_mode_src       <= audio_mode_meta;
+		audio_flac_eos_sync  <= {audio_flac_eos_sync[0], audio_flac_eos_sys};
 	end
 end
 
@@ -243,7 +276,9 @@ end
 wire reset_audio_src = reset_audio_src_sync[2];
 wire reset_audio_out = reset_audio_out_sync[2];
 
-// kate - D2 codec-independent PCM contract and CDC buffer.
+// kate - D3 codec-independent PCM mux.  D2 diagnostic modes override the FLAC
+// source when selected; Off exposes the real decoder to the already-proven PCM
+// FIFO/output adapter.  Each producer advances only on its own ready handshake.
 wire               audio_pcm_valid;
 wire               audio_pcm_ready;
 wire signed [15:0] audio_pcm_left;
@@ -256,19 +291,65 @@ wire [33:0]        audio_pcm_fifo_data;
 wire               audio_pcm_fifo_rd;
 wire               audio_pcm_underrun;
 
+wire               audio_test_pcm_valid;
+wire               audio_test_pcm_ready;
+wire signed [15:0] audio_test_pcm_left;
+wire signed [15:0] audio_test_pcm_right;
+wire               audio_test_pcm_stereo;
+wire               audio_test_pcm_rate_48k;
+
+wire               audio_flac_pcm_valid;
+wire               audio_flac_pcm_ready;
+wire signed [15:0] audio_flac_pcm_left;
+wire signed [15:0] audio_flac_pcm_right;
+wire               audio_flac_pcm_stereo;
+wire               audio_flac_pcm_rate_48k;
+wire               audio_flac_eos_ok;
+wire               audio_flac_clean_reject;
+wire               audio_flac_stream_error;
+wire               audio_test_selected = (audio_mode_src != 3'd0);
+wire               audio_flac_input_eos = audio_flac_eos_sync[1] && audio_flac_stream_empty;
+
 assign audio_pcm_ready = !audio_pcm_fifo_full;
+assign audio_test_pcm_ready = audio_test_selected && audio_pcm_ready;
+assign audio_flac_pcm_ready = !audio_test_selected && audio_pcm_ready;
+
+assign audio_pcm_valid    = audio_test_selected ? audio_test_pcm_valid    : audio_flac_pcm_valid;
+assign audio_pcm_left     = audio_test_selected ? audio_test_pcm_left     : audio_flac_pcm_left;
+assign audio_pcm_right    = audio_test_selected ? audio_test_pcm_right    : audio_flac_pcm_right;
+assign audio_pcm_stereo   = audio_test_selected ? audio_test_pcm_stereo   : audio_flac_pcm_stereo;
+assign audio_pcm_rate_48k = audio_test_selected ? audio_test_pcm_rate_48k : audio_flac_pcm_rate_48k;
 
 audio_pcm_test_source audio_pcm_test_source
 (
 	.clk      (clk_mpeg2),
 	.reset    (reset_audio_src),
 	.mode     (audio_mode_src),
-	.ready    (audio_pcm_ready),
-	.valid    (audio_pcm_valid),
-	.left     (audio_pcm_left),
-	.right    (audio_pcm_right),
-	.stereo   (audio_pcm_stereo),
-	.rate_48k (audio_pcm_rate_48k)
+	.ready    (audio_test_pcm_ready),
+	.valid    (audio_test_pcm_valid),
+	.left     (audio_test_pcm_left),
+	.right    (audio_test_pcm_right),
+	.stereo   (audio_test_pcm_stereo),
+	.rate_48k (audio_test_pcm_rate_48k)
+);
+
+audio_flac_constant_decoder audio_flac_constant_decoder
+(
+	.clk          (clk_mpeg2),
+	.reset        (reset_audio_src),
+	.in_data      (audio_flac_stream_data),
+	.in_valid     (!audio_flac_stream_empty),
+	.in_ready     (audio_flac_input_ready),
+	.in_eos       (audio_flac_input_eos),
+	.pcm_valid    (audio_flac_pcm_valid),
+	.pcm_ready    (audio_flac_pcm_ready),
+	.pcm_left     (audio_flac_pcm_left),
+	.pcm_right    (audio_flac_pcm_right),
+	.pcm_stereo   (audio_flac_pcm_stereo),
+	.pcm_rate_48k (audio_flac_pcm_rate_48k),
+	.eos_ok       (audio_flac_eos_ok),
+	.clean_reject (audio_flac_clean_reject),
+	.stream_error (audio_flac_stream_error)
 );
 
 audio_pcm_fifo audio_pcm_fifo
@@ -294,6 +375,32 @@ audio_pcm_output_adapter audio_pcm_output_adapter
 	.audio_l    (audio_pcm_output_l),
 	.audio_r    (audio_pcm_output_r),
 	.underrun   (audio_pcm_underrun)
+);
+
+// kate - D3 F2 FLAC bytes cross from clk_sys into the decoder clock without
+// sharing H.262 transport state.  HPS download completion becomes in_eos only
+// after every queued compressed byte has been consumed.
+assign audio_flac_stream_wr =
+	audio_flac_download_active &&
+	ioctl_wr &&
+	!audio_input_reset_active &&
+	!audio_flac_stream_full;
+
+assign audio_flac_stream_rd =
+	!audio_flac_stream_empty &&
+	audio_flac_input_ready;
+
+audio_flac_stream_fifo audio_flac_stream_fifo
+(
+	.reset    (audio_reset_request),
+	.wr_clk   (clk_sys),
+	.wr_data  (audio_flac_stream_wr ? ioctl_dout : 8'd0),
+	.wr_en    (audio_flac_stream_wr),
+	.wr_full  (audio_flac_stream_full),
+	.rd_clk   (clk_mpeg2),
+	.rd_en    (audio_flac_stream_rd),
+	.rd_data  (audio_flac_stream_data),
+	.rd_empty (audio_flac_stream_empty)
 );
 
 // kate - Phase 1Ob: the streaming H.262 bitreader continues to own input
@@ -373,4 +480,3 @@ wire [7:0]  fb_video_b;
 wire        fb_video_de;
 wire        fb_video_hs;
 wire        fb_video_vs;
-
