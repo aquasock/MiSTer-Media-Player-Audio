@@ -472,3 +472,43 @@ Pull current Audio `main`, run `python3 tools/streams/verify_d3_flac_constant.py
 - [ ] Passed — corrected unsupported/error terminal drain and full D3 MiSTer regression matrix are pending
 
 ---
+## 014 COMMIT D3 b651ab4 2026-08-16T14:36:51-07:00
+
+#### Coming From:
+
+D3 b651ab4
+
+#### Purpose:
+
+Record the user-reported successful D3 functional regression for official source `b651ab4`, analyze the pushed Quartus/STA evidence, complete the current-workflow result cleanup and main-project compatibility review, and define the next D3 timing-closure proposal before modifying source.
+
+#### Outcome:
+
+The user reports that all requested functional tests pass on MiSTer: the valid-but-unsupported 24-bit FLAC repeatedly completes with USER off and no crash/hang; each supported silence anchor succeeds immediately afterward; reset/re-arm works; all four D2 Audio Test modes pass; and the standing MPEG/video regressions pass. This closes the previously observed terminal-drain functional failure.
+
+The user build-results commit is `81219cec206440a80bd26273b23dcea6e04600ef` (`6e5d634 build update`). Its name reflects the metadata HEAD used for the build; the official executable source remains `b651ab4b8b1e093adc7571e23fed63743f5be351`. Quartus Prime 17.0.2 Build 602 fits successfully on `5CSEBA6U23I7` at 32,364 ALMs, 44,592 registers, 472,097 block-memory bits in 75 RAM blocks, 68 DSPs, and 3 PLLs. Against D0 this is +582 ALMs, +780 registers, +10,752 memory bits, +2 RAM blocks, with no DSP or PLL increase.
+
+Timing is not acceptable yet. Global setup on `general[2]` is -1.667 ns with endpoint TNS -6.369 ns. The focused `general[2]` decoder same-clock report has 0/100 violations with +0.726 ns worst slack, and the video same-clock report has 0/80 violations with +7.330 ns worst slack. The focused Audio recovery report finds 30/30 violated paths with -2.364 ns worst recovery slack. Those recovery paths originate from `audio_reset_stretch` and `hps_io|ioctl_index` in the `general[0]` / `clk_sys` side and terminate at `audio_mode_src`, `audio_mode_meta`, `audio_flac_eos_sync`, and `reset_audio_src_sync` registers in the `general[2]` / `clk_mpeg2` domain. The failure is therefore localized to the D2/D3 Audio reset/control CDC boundary rather than the FLAC decoder datapath or MPEG/video datapaths. D3 cannot be closed while these setup/recovery violations remain.
+
+Current-workflow step 8 is complete in commit `bdefb535499fe5e710ca0a7740af75b44b1e8516` (`(b651ab4) clear build results`), which removes the inspected contents of root `output_files/` and `phase1p_timing_reports/` without changing executable source.
+
+Current-workflow step 9 is also complete. MiSTer-Media-Player `master` metadata tip is `6f9b6be31739ed7a3033ae5a9213ad8439488f0d`; its current functional source commit is `ac1ddaf393a09c7b2733657a84940f227cd1a63a` (`Widen generalized B geometry`). Comparison from the Audio fork point `bc37008` through `ac1ddaf` shows no main-side change to `MediaPlayer_top_00.svh` or `MediaPlayer_top_07.svh`. Main `files.qip` has two additions for its evolving MPEG path; eventual reintegration must merge Audio source-list entries into the then-current main QIP rather than overwrite it. No immediate conflict blocks the proposed Audio timing correction.
+
+Proposed source boundary: modify only `MediaPlayer_top_00.svh` to close the Audio reset/control CDC identified by STA. Preserve the already hardware-passing FLAC decoder, terminal drain, F2 FIFO behavior, first-byte hold, exact EOS semantics, D2 Audio Test behavior, and MPEG/video isolation. Rework the `clk_sys`-generated Audio reset/start/mode/EOS control handoff so it is synchronized into `clk_mpeg2` and `CLK_AUDIO` without directly creating recovery-sensitive cross-clock asynchronous-control paths. Do not change `MediaPlayer.sdc` merely to suppress the violation; if implementation evidence shows a timing exception/constraint change is actually required, stop and obtain revised approval before changing SDC.
+
+Validation after approval: clean Quartus compile plus `tools/phase1p_timing.tcl`; require non-negative global setup and recovery slack/TNS, 0 focused decoder/video setup violations, and no regression in hold/removal/minimum-pulse timing. Re-run the D3 Python verifier and the full MiSTer matrix: both supported anchors, repeated unsupported 24-bit no-crash/no-USER behavior followed immediately by supported reload, reset/re-arm, all four D2 Audio Test modes, and standing MPEG/video regressions. Resource deltas must remain within the established D3 shape unless separately reviewed.
+
+#### Next Steps:
+
+Await explicit user approval. If approved, implement the `MediaPlayer_top_00.svh` Audio CDC correction and commit it as the next official D3 build hash. Do not begin D4 until D3 has a clean timing result and the functional matrix remains passing.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — Quartus compile/fitter succeeds and the full requested MiSTer functional matrix passes; generated evidence was inspected and cleared under the current workflow
+- [ ] Passed — D3 remains open because global setup and Audio recovery timing violate; corrective CDC source work awaits approval
+
+---
