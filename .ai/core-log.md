@@ -123,7 +123,7 @@ The generated corpus contains 27 valid or valid-but-first-milestone-unsupported 
 
 A clean local regeneration using the pinned tools reproduces the tracked manifest exactly. Python compilation succeeds, and `verify_flac_corpus.py` reports `VERIFY PASS: 27 valid/unsupported cases, 2 invalid cases, and 8 transport profiles`. The verifier fails closed on tool versions, schema/content, generated file set, hashes, reference FLAC test/decode, observed feature inventory, metadata inventory, and transport-profile signatures.
 
-The observed encoded corpus spans FLAC subframe types `CONSTANT`, `FIXED`, `LPC`, and `VERBATIM`; channel assignments `INDEPENDENT`, `MID_SIDE`, and `RIGHT_SIDE`; fixed predictor orders 0/1/2; LPC order 8; Rice partition orders 0/3/4/5. These are corpus observations only and do not claim the future FPGA decoder supports all observed features.
+The observed encoded corpus spans FLAC subframe types `CONSTANT`, `FIXED`, `LPC`, and `VERBATIM`; channel assignments `INDEPENDENT`, `MID_SIDE`, and `RIGHT_SIDE`; fixed predictor orders 0/1/2; LPC order 8; and Rice partition orders 0/3/4/5. These are corpus observations only and do not claim the future FPGA decoder supports all observed features.
 
 `.ai/core-standards.md` still has no controlled FLAC source record. D1 used the official Xiph FLAC 1.5.0 reference tools/documentation for corpus generation and validation; any standards-library addition remains a separate explicitly scoped metadata boundary.
 
