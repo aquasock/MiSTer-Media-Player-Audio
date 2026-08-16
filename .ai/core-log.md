@@ -311,3 +311,35 @@ Quartus compilation, fitted resource/timing delta versus D0/D2, physical F2 tran
 - [ ] Passed — MiSTer F2 supported-stream/re-arm/clean-reject and D2/video regression validation is pending
 
 ---
+## 009 COMMIT D3 97399dc 2026-08-16T07:21:00-07:00
+
+#### Coming From:
+
+D3 97399dc
+
+#### Purpose:
+
+Record the D3 hardware-blocking file-selector failure and the proposed minimal correction before modifying source. Normal generated `.flac` files are not visible in MiSTer's F2 browser even though the D3 decoder and generated media use the expected FLAC filename extension.
+
+#### Outcome:
+
+Evidence review confirms the generated lowercase `.flac` suffix is not the problem: current MiSTer file matching is case-insensitive. The active Audio `CONF_STR` currently declares `F2,FLAC,Open FLAC Audio;`. MiSTer's file-selector extension filter is evaluated in three-character units, so four-character `FLAC` cannot represent `.flac` as intended. Current MiSTer file matching supports wildcard characters in the three-character pattern; `FL*` therefore matches `.flac` without requiring users to rename generated files.
+
+Proposed source boundary: modify only `MediaPlayer_top_00.svh`, changing `F2,FLAC,Open FLAC Audio;` to `F2,FL*,Open FLAC Audio;`. Do not alter the FLAC transport, decoder, PCM path, MPEG/video logic, QIP, clocks, DDR, or timing constraints.
+
+Validation after approval: clean Quartus/STA build, verify normal lowercase `.flac` files become visible/selectable through F2, then repeat the existing D3 supported mono/stereo silence-anchor, re-arm, unsupported-24-bit clean-reject, D2 Audio Test, and MPEG/video regression matrix. This is a D3 corrective cycle, not D4 feature expansion.
+
+#### Next Steps:
+
+Await explicit user approval. If approved, make the single `MediaPlayer_top_00.svh` selector-filter change and commit it as the next official build hash. No source change is authorized by this entry alone.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [ ] Built — proposal only; no new executable build has been produced
+- [ ] Passed — awaiting user approval for the one-line D3 selector correction
+
+---
