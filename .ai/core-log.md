@@ -103,7 +103,7 @@ Begin D1 with the deterministic FLAC corpus/generator/manifest boundary. Preserv
 - [x] Passed — all requested D0 MiSTer hardware tests reported passing; D0 baseline accepted and closed
 
 ---
-## 004 PLAN D1 40ec769 2026-08-16T04:54:00-07:00
+## 004 COMMIT D1 2ca7be5 2026-08-16T05:07:23-07:00
 
 #### Coming From:
 
@@ -111,27 +111,38 @@ D0 40ec769
 
 #### Purpose:
 
-Implement the approved D1 deterministic FLAC corpus/generator/manifest boundary without changing RTL, Quartus source lists, constraints, transport integration, clocks, DDR, or the common PCM output path.
+Establish the deterministic FLAC corpus/generator/manifest infrastructure required before decoder RTL, with pinned reference tools, stable case identities, fail-closed reproducibility checks, deterministic malformed/unsupported cases, and deterministic compressed-input/PCM-output backpressure profiles while leaving all FPGA implementation source unchanged.
 
 #### Outcome:
 
-The approved D1 source boundary is limited to deterministic local test infrastructure under `tools/streams/` plus a generated-media ignore rule. The corpus will use algorithmically generated integer PCM only; pin `flac 1.5.0` and `metaflac 1.5.0`; assign stable case IDs including concrete short-length IDs; record source PCM, encoded FLAC, and golden decoded PCM SHA-256 values; record exact command policy, metadata blocks, frame/block/subframe/channel-assignment feature inventory, sample counts, provenance, and licensing; define deterministic transport/backpressure profile signatures; and include deterministic truncated, corrupted, and valid-but-first-milestone-unsupported streams.
+Exact GitHub `main` source commit `2ca7be591df912e6bfcc03a9dbe6ed1755c85e00` (`Add deterministic FLAC D1 corpus`) is one commit ahead of the approved D1 planning boundary and modifies exactly six intended paths. No RTL, QIP, QSF, SDC, clocking, DDR, transport integration, decoder, or PCM-output implementation source changes.
 
-The verifier is fail-closed: tool version, manifest schema/content, file set, hashes, reference `flac --test`, fresh reference decode, feature inventory, and deterministic transport-profile signatures must all match. Generated `.pcm` and `.flac` media remains local under `tools/streams/generated/flac/` and is not committed. FLAC support claims remain separate from corpus observations because D1 contains no decoder RTL.
+The D1 corpus pins `flac 1.5.0` and `metaflac 1.5.0`, uses only algorithmically generated signed integer PCM, and keeps generated `.pcm`/`.flac` media local under `tools/streams/generated/flac/`. The tracked manifest records stable IDs, source PCM SHA-256, encoded FLAC SHA-256, golden decoded PCM SHA-256, exact sample counts, channel/rate/bit-depth metadata, metadata-block inventory, FLAC frame/block/subframe/channel-assignment observations, and the deterministic tool/command policy. Seventeen concrete short-length members are individually identified for lengths 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 33, 255, 256, 257, 4095, 4096, and 4097 samples.
 
-`.ai/core-standards.md` currently contains no FLAC source record. D1 therefore uses the official Xiph FLAC 1.5.0 release and command-line documentation as the external tool authority; any controlled standards-library addition will be handled separately rather than broadening this source commit.
+The generated corpus contains 27 valid or valid-but-first-milestone-unsupported streams and two deterministic invalid streams. The unsupported case is a valid 24-bit mono FLAC stream; the invalid cases are deterministic truncation and frame-payload corruption whose reference `flac --test` result is pinned to failure. Eight deterministic transport profiles are pinned: continuous, byte-at-a-time, periodic input stalls, periodic output stalls, combined stalls, fixed-seed pseudorandom stalls/chunks, small chunks, and exact-final-byte EOS.
+
+A clean local regeneration using the pinned tools reproduces the tracked manifest exactly. Python compilation succeeds, and `verify_flac_corpus.py` reports `VERIFY PASS: 27 valid/unsupported cases, 2 invalid cases, and 8 transport profiles`. The verifier fails closed on tool versions, schema/content, generated file set, hashes, reference FLAC test/decode, observed feature inventory, metadata inventory, and transport-profile signatures.
+
+The observed encoded corpus spans FLAC subframe types `CONSTANT`, `FIXED`, `LPC`, and `VERBATIM`; channel assignments `INDEPENDENT`, `MID_SIDE`, and `RIGHT_SIDE`; fixed predictor orders 0/1/2; LPC order 8; and Rice partition orders 0/3/4/5. These are corpus observations only and do not claim the future FPGA decoder supports all observed features.
+
+`.ai/core-standards.md` still has no controlled FLAC source record. D1 used the official Xiph FLAC 1.5.0 reference tools/documentation for corpus generation and validation; any standards-library addition remains a separate explicitly scoped metadata boundary.
 
 #### Next Steps:
 
-Publish the D1 tooling/manifest source as one focused commit, regenerate it with the pinned reference tools, run the fail-closed verifier, then replace this planning entry with the exact D1 commit result and proceed to D2 only after D1 evidence is accepted.
+Preserve this D1 corpus as the deterministic reference infrastructure. The next engineering boundary is D2: prove the codec-independent signed 16-bit mono/stereo 44.1/48 kHz PCM contract, buffering/output adapter, deterministic valid/ready backpressure and stream re-arm, and real MiSTer audio output before integrating a FLAC decoder. D2 requires its own approved implementation boundary.
 
 #### Files Modified:
 
-- `.ai/core-log.md`
+- `.gitignore`
+- `tools/streams/FLAC_CORPUS.md`
+- `tools/streams/flac_corpus_common.py`
+- `tools/streams/flac_corpus_manifest.json`
+- `tools/streams/generate_flac_corpus.py`
+- `tools/streams/verify_flac_corpus.py`
 
 #### Status:
 
-- [ ] Built — D1 tooling implementation not yet committed
-- [x] Passed — D1 source boundary explicitly approved by the user
+- [x] Built — D1 generator/verifier executed locally with pinned FLAC/metaflac 1.5.0; no Quartus build is required because FPGA implementation source is unchanged
+- [x] Passed — tracked manifest regenerates exactly and fail-closed verification passes for 27 valid/unsupported cases, 2 invalid cases, and 8 transport profiles
 
 ---
