@@ -56,6 +56,20 @@ proc phase1p_find_clock_by_period {target_period tolerance description} {
     return [lindex $match 0]
 }
 
+proc phase1p_node_name {node_id} {
+    if {$node_id eq ""} {
+        return "<none>"
+    }
+    return [get_node_info $node_id -name]
+}
+
+proc phase1p_clock_name {clock_id} {
+    if {$clock_id eq ""} {
+        return "<none>"
+    }
+    return [get_clock_info $clock_id -name]
+}
+
 project_open $project_name
 
 create_timing_netlist
@@ -191,6 +205,64 @@ report_timing \
     -multi_corner \
     -file "$output_dir/phase1p_video_same_clock_setup_diverse.rpt"
 
+# ---------------------------------------------------------------------------
+# Compact multicorner 54 MHz setup-path diagnostic.
+#
+# kate - The full TimeQuest reports above are authoritative timing evidence,
+# but their size makes repository handoff awkward.  Emit the 50 worst unique
+# endpoint setup paths for every available operating condition as TSV so the
+# remaining D3 general[2] failure can be localized from a small text artifact.
+# Each row records the exact slack, launch/latch clocks, source/destination
+# nodes, and an explicit 54->54 versus cross-clock classification.
+# ---------------------------------------------------------------------------
+
+set compact_path "$output_dir/phase1p_decoder_setup_compact.tsv"
+set compact_file [open $compact_path "w"]
+puts $compact_file "# Phase 1P compact 54 MHz setup-path diagnostic"
+puts $compact_file "# corner\tslack_ns\tclassification\tlaunch_clock\tsource_node\tlatch_clock\tdestination_node"
+
+foreach_in_collection op [get_available_operating_conditions] {
+    set_operating_conditions $op
+    update_timing_netlist
+
+    set corner_name [get_operating_conditions_info $op -display_name]
+    set decoder_clock_corner [phase1p_find_clock_by_period 18.518 0.010 "54 MHz decoder"]
+    set decoder_clock_name [get_clock_info $decoder_clock_corner -name]
+
+    foreach_in_collection path [get_timing_paths \
+        -setup \
+        -to_clock $decoder_clock_corner \
+        -npaths 50 \
+        -nworst 1 \
+        -detail summary] {
+
+        set slack [get_path_info $path -slack]
+        set source_node [phase1p_node_name [get_path_info $path -from]]
+        set destination_node [phase1p_node_name [get_path_info $path -to]]
+        set launch_clock [phase1p_clock_name [get_path_info $path -from_clock]]
+        set latch_clock [phase1p_clock_name [get_path_info $path -to_clock]]
+
+        if {($launch_clock eq $decoder_clock_name) && ($latch_clock eq $decoder_clock_name)} {
+            set classification "54->54"
+        } elseif {$latch_clock eq $decoder_clock_name} {
+            set classification "cross-clock"
+        } else {
+            set classification "unexpected-destination-clock"
+        }
+
+        puts $compact_file [join [list \
+            $corner_name \
+            $slack \
+            $classification \
+            $launch_clock \
+            $source_node \
+            $latch_clock \
+            $destination_node] "\t"]
+    }
+}
+
+close $compact_file
+
 puts ""
 puts "Phase 1P timing extraction complete."
 puts "Reports written to:"
@@ -205,6 +277,7 @@ puts "  $output_dir/phase1p_video_same_clock_setup_diverse.rpt"
 puts "  $output_dir/phase1p_setup_summary.rpt"
 puts "  $output_dir/phase1p_recovery_summary.rpt"
 puts "  $output_dir/phase1p_check_timing.rpt"
+puts "  $compact_path"
 puts ""
 
 delete_timing_netlist
