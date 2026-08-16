@@ -146,3 +146,35 @@ Preserve this D1 corpus as the deterministic reference infrastructure. The next 
 - [x] Passed — tracked manifest regenerates exactly and fail-closed verification passes for 27 valid/unsupported cases, 2 invalid cases, and 8 transport profiles
 
 ---
+## 005 PLAN D2 2ca7be5 2026-08-16T05:09:00-07:00
+
+#### Coming From:
+
+D1 2ca7be5
+
+#### Purpose:
+
+Implement the approved D2 codec-independent PCM/output proof before FLAC decoder integration. Prove signed 16-bit mono/stereo 44.1/48 kHz sample transport, deterministic valid/ready backpressure and re-arm behavior, clock-domain-safe buffering from the decoder-side clock domain into MiSTer's 24.576 MHz audio domain, and real MiSTer AUDIO_L/AUDIO_R output without changing video decoding or adding compressed-audio RTL.
+
+#### Outcome:
+
+The approved D2 source boundary is limited to a small sibling Audio path: a deterministic PCM test producer in `clk_mpeg2`, a dual-clock on-chip FIFO, and a MiSTer output adapter clocked from `CLK_AUDIO`. The output adapter will use an integer phase accumulator so 48 kHz is exact at one sample per 512 audio clocks and 44.1 kHz has exact long-term rate with bounded one-audio-clock scheduling jitter. Four selectable proof modes will cover 44.1 kHz mono/stereo and 48 kHz mono/stereo; Off remains the default. Mode changes will stretch an Audio-local reset request so producer, FIFO, and output adapter re-arm cleanly without perturbing the MPEG/video reset or stream-readiness path.
+
+The deterministic source will advance its waveform state only on `valid && ready`, so FIFO backpressure cannot lose or duplicate producer samples. Mono is represented explicitly and duplicated only by the MiSTer output adapter; stereo uses distinct left/right deterministic tones so channel ordering is observable. D2 will preserve `AUDIO_S=1` signed-sample semantics and `AUDIO_MIX=0`.
+
+The implementation will add a deterministic software checker for the producer sequence, valid/ready invariance, mono duplication, channel ordering, and 44.1/48 kHz phase-accumulator scheduling. Quartus compilation, timing/resource delta versus D0, and real MiSTer audible/LED validation remain the user hardware-validation boundary after the source commit.
+
+#### Next Steps:
+
+Publish the focused D2 implementation, run the deterministic software checker, verify the source diff contains no FLAC/video/DDR/PLL changes, record the exact source commit in this log, then have the user pull, clean-build, and exercise all four Audio Test modes on MiSTer before D2 is accepted.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [ ] Built — D2 implementation not yet committed or Quartus-built
+- [x] Passed — D2 implementation boundary explicitly approved by the user
+
+---
