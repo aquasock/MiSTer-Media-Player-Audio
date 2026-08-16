@@ -83,6 +83,10 @@ wire mpeg2_new_normal_user_led =
     mpeg2_new_ddr_read_seen &&
     !mpeg2_new_ddr_cache_error;
 
-assign LED_USER = mpeg2_new_normal_user_led;
+// kate - D3 silence anchors need an observable hardware terminal result.  A
+// successfully decoded FLAC stream therefore shares the existing USER success
+// indication; unsupported or malformed FLAC leaves USER low unless video itself
+// has independently reached its standing success condition.
+assign LED_USER = mpeg2_new_normal_user_led || audio_flac_eos_ok;
 
 endmodule
