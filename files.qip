@@ -5,6 +5,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/mpeg2_stream_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_pcm_test_source.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_pcm_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_pcm_output_adapter.sv
+# kate - D3 bounded native-FLAC input and CONSTANT-subframe decoder.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_flac_stream_fifo.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_flac_constant_decoder.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mpeg2_luma_framebuffer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mpeg2_new/mpeg2_h262_frontend.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mpeg2_new/mpeg2_h262_dct_vlc.sv
