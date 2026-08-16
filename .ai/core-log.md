@@ -44,3 +44,47 @@ The required source state after import is: every inherited non-`.ai` path matche
 - [ ] D0 hardware/resource/timing baseline accepted
 
 ---
+
+## 002 COMMIT D0 2e202fa 2026-08-16T03:59:00-07:00
+
+#### Coming From:
+
+D0 plan/control state recorded at `435650e564f370efa93ba6b883887ec4f20d1efd`
+
+#### Purpose:
+
+Establish the independent MiSTer-Media-Player-Audio source baseline from exact MiSTer-Media-Player commit `bc37008c167809bec951715cd0a924478fd5ee36` while retaining the Audio project's own `.ai` control directory and making no executable source changes.
+
+#### Outcome:
+
+Bootstrap commit `2e202fab2402788bf548654c75e27ca432289723` (`D0 bootstrap from MiSTer-Media-Player bc37008`) imports the complete inherited non-`.ai` tree. Git object verification against upstream tree `6028d29da1fa55920fdab7dd391202c30285aadb` shows every top-level inherited non-`.ai` blob/tree SHA is identical, including `.editorconfig`, `.github`, `.gitignore`, project/documentation files, `files.qip`, and the complete `docs`, `rtl`, `sys`, and `tools` subtrees. The Audio `.ai` tree intentionally differs and retains this project's control state.
+
+`MediaPlayer_top_00.svh` remains blob `a4d085e655e0566d2694d0701cbbf9372763fd85`, identical to upstream `bc37008`, and preserves all five advisory `AUDIO_FORK_POINT[...]` anchors: PCM output, stream split, clock/reset, DDR client, and A/V sync.
+
+No FLAC decoder, PCM path, transport split, audio clocking, DDR client, or other Audio implementation is present yet. D0 source identity is therefore accepted; build/hardware qualification remains outstanding.
+
+#### Next Steps:
+
+1. Pull current Audio `main` so the local checkout contains bootstrap commit `2e202fab2402788bf548654c75e27ca432289723` plus this metadata-only log update.
+2. Delete any Quartus-generated `db/`, `incremental_db/`, and `output_files/` state before the baseline build.
+3. Run `quartus_sh --flow compile MediaPlayer` from the repository root.
+4. After successful compilation, run `quartus_sta -t tools/phase1p_timing.tcl`.
+5. Test the inherited core on the standard MiSTer target using the existing v0.4.0 acceptance streams/behavior appropriate to this unchanged baseline.
+6. Push `(2e202fa)_build_logs.tar.gz` and any requested D0 evidence/resources into `.ai/current_results/` for inspection.
+7. Record ALMs, registers, block-memory/RAM blocks, DSPs, PLLs, setup/hold/recovery/removal timing, focused decoder/video timing, and observed hardware behavior before beginning D1.
+
+#### Files Modified:
+
+- Complete inherited non-`.ai` tree imported from upstream `bc37008` in bootstrap commit `2e202fa`.
+- `.ai/build_commands.md` repository reference corrected to MiSTer-Media-Player-Audio as part of the local bootstrap commit.
+- `.ai/core-log.md` updated in this metadata-only commit.
+
+#### Status:
+
+- [x] Exact `bc37008` non-`.ai` source tree imported
+- [x] Inherited Git object identity verified
+- [x] All `AUDIO_FORK_POINT[...]` anchors preserved
+- [ ] Clean inherited Quartus build completed
+- [ ] D0 hardware/resource/timing baseline accepted
+
+---
