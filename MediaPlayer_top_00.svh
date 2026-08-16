@@ -46,10 +46,15 @@ assign HDMI_BOB_DEINT = 0;
 // Prefer serialized/time-multiplexed arithmetic: the integrated core values DSP
 // headroom more than parallel per-codec datapaths.  AUDIO_S/MIX policy belongs
 // here or in a sibling output adapter, not inside the H.262 video decoder.
-assign AUDIO_S = 0;
-assign AUDIO_L = 0;
-assign AUDIO_R = 0;
-assign AUDIO_MIX = 0;
+// kate - D2: route the sibling PCM proof path into MiSTer's signed 16-bit audio
+// ports.  Mono duplication and sample-rate scheduling remain output-adapter
+// responsibilities; codec-side logic sees only the valid/ready PCM contract.
+wire [15:0] audio_pcm_output_l;
+wire [15:0] audio_pcm_output_r;
+assign AUDIO_S = 1'b1;
+assign AUDIO_L = audio_pcm_output_l;
+assign AUDIO_R = audio_pcm_output_r;
+assign AUDIO_MIX = 2'd0;
 
 assign LED_DISK = ioctl_download;
 assign LED_POWER = 0;
@@ -69,6 +74,7 @@ localparam CONF_STR = {
 	"-;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"O[3:1],Audio test,Off,44.1k Mono,44.1k Stereo,48k Mono,48k Stereo;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
@@ -182,6 +188,113 @@ end
 
 wire reset_mpeg2 = reset_mpeg2_sync[2];
 wire reset_video = reset_video_sync[2];
+
+// kate - D2 Audio reset/CDC proof.  status[3:1] is owned by clk_sys.  Any mode
+// change stretches an Audio-only reset request so the producer, DCFIFO, and
+// CLK_AUDIO adapter all re-arm as one stream without perturbing MPEG readiness.
+wire [2:0] audio_test_mode = status[3:1];
+reg  [2:0] audio_test_mode_prev;
+reg  [4:0] audio_reset_stretch;
+
+always @(posedge clk_sys or posedge reset_request) begin
+	if (reset_request) begin
+		audio_test_mode_prev <= 3'd0;
+		audio_reset_stretch  <= 5'd0;
+	end
+	else begin
+		audio_test_mode_prev <= audio_test_mode;
+		if (audio_test_mode != audio_test_mode_prev)
+			audio_reset_stretch <= 5'd31;
+		else if (audio_reset_stretch != 5'd0)
+			audio_reset_stretch <= audio_reset_stretch - 5'd1;
+	end
+end
+
+wire audio_reset_request = reset_request | (audio_reset_stretch != 5'd0);
+
+(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
+reg [2:0] reset_audio_src_sync;
+(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
+reg [2:0] reset_audio_out_sync;
+(* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)
+reg [2:0] audio_mode_meta;
+reg [2:0] audio_mode_src;
+
+always @(posedge clk_mpeg2 or posedge audio_reset_request) begin
+	if (audio_reset_request) begin
+		reset_audio_src_sync <= 3'b111;
+		audio_mode_meta      <= 3'd0;
+		audio_mode_src       <= 3'd0;
+	end
+	else begin
+		reset_audio_src_sync <= {reset_audio_src_sync[1:0], 1'b0};
+		audio_mode_meta      <= audio_test_mode;
+		audio_mode_src       <= audio_mode_meta;
+	end
+end
+
+always @(posedge CLK_AUDIO or posedge audio_reset_request) begin
+	if (audio_reset_request)
+		reset_audio_out_sync <= 3'b111;
+	else
+		reset_audio_out_sync <= {reset_audio_out_sync[1:0], 1'b0};
+end
+
+wire reset_audio_src = reset_audio_src_sync[2];
+wire reset_audio_out = reset_audio_out_sync[2];
+
+// kate - D2 codec-independent PCM contract and CDC buffer.
+wire               audio_pcm_valid;
+wire               audio_pcm_ready;
+wire signed [15:0] audio_pcm_left;
+wire signed [15:0] audio_pcm_right;
+wire               audio_pcm_stereo;
+wire               audio_pcm_rate_48k;
+wire               audio_pcm_fifo_full;
+wire               audio_pcm_fifo_empty;
+wire [33:0]        audio_pcm_fifo_data;
+wire               audio_pcm_fifo_rd;
+wire               audio_pcm_underrun;
+
+assign audio_pcm_ready = !audio_pcm_fifo_full;
+
+audio_pcm_test_source audio_pcm_test_source
+(
+	.clk      (clk_mpeg2),
+	.reset    (reset_audio_src),
+	.mode     (audio_mode_src),
+	.ready    (audio_pcm_ready),
+	.valid    (audio_pcm_valid),
+	.left     (audio_pcm_left),
+	.right    (audio_pcm_right),
+	.stereo   (audio_pcm_stereo),
+	.rate_48k (audio_pcm_rate_48k)
+);
+
+audio_pcm_fifo audio_pcm_fifo
+(
+	.reset    (audio_reset_request),
+	.wr_clk   (clk_mpeg2),
+	.wr_data  ({audio_pcm_rate_48k, audio_pcm_stereo, audio_pcm_left, audio_pcm_right}),
+	.wr_en    (audio_pcm_valid && audio_pcm_ready),
+	.wr_full  (audio_pcm_fifo_full),
+	.rd_clk   (CLK_AUDIO),
+	.rd_en    (audio_pcm_fifo_rd),
+	.rd_data  (audio_pcm_fifo_data),
+	.rd_empty (audio_pcm_fifo_empty)
+);
+
+audio_pcm_output_adapter audio_pcm_output_adapter
+(
+	.clk        (CLK_AUDIO),
+	.reset      (reset_audio_out),
+	.fifo_data  (audio_pcm_fifo_data),
+	.fifo_empty (audio_pcm_fifo_empty),
+	.fifo_rd    (audio_pcm_fifo_rd),
+	.audio_l    (audio_pcm_output_l),
+	.audio_r    (audio_pcm_output_r),
+	.underrun   (audio_pcm_underrun)
+);
 
 // kate - Phase 1Ob: the streaming H.262 bitreader continues to own input
 // backpressure while picture_data() advances across every slice of the first
