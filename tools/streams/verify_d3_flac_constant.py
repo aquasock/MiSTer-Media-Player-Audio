@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import struct
 import subprocess
@@ -25,6 +26,13 @@ EXPECTED = {
         "pcm_sha256": "c35020473aed1b4642cd726cad727b63fff2824ad68cedd7ffb73c7cbd890479",
     },
 }
+
+ROOT = Path(__file__).resolve().parents[2]
+MANIFEST_PATH = Path(__file__).with_name("flac_corpus_manifest.json")
+RTL_PATH = ROOT / "rtl" / "audio" / "audio_flac_constant_decoder.sv"
+UNSUPPORTED_CASE_ID = "flac_neg_02_unsupported_24bit_mono_44100"
+FIFO_DEPTH = 256
+STREAMINFO_DECISION_BYTES = 42
 
 
 def sha(data: bytes) -> str:
@@ -65,6 +73,45 @@ def encode_case(root: Path, name: str, channels: int, rate: int) -> tuple[bytes,
         "metaflac", "--dont-use-padding", "--remove", "--block-type=VORBIS_COMMENT", str(flac_path)
     ], check=True)
     return pcm, flac_path.read_bytes()
+
+
+def lfsr24_step(state: int) -> int:
+    bit = ((state >> 0) ^ (state >> 1) ^ (state >> 2) ^ (state >> 7)) & 1
+    return ((state >> 1) | (bit << 23)) & 0xFFFFFF
+
+
+def encode_unsupported_case(root: Path) -> bytes:
+    state = 0x5A17C3
+    pcm = bytearray()
+    for _ in range(4096):
+        state = lfsr24_step(state)
+        value = state - 0x800000
+        pcm += int(value & 0xFFFFFF).to_bytes(3, "little")
+
+    pcm_path = root / f"{UNSUPPORTED_CASE_ID}.pcm"
+    flac_path = root / f"{UNSUPPORTED_CASE_ID}.flac"
+    pcm_path.write_bytes(pcm)
+    subprocess.run([
+        "flac", "--force", "--silent", "--verify", "--threads=1",
+        "--no-padding", "--no-seektable", "--no-preserve-modtime",
+        "--force-raw-format", "--endian=little", "--sign=signed",
+        "--channels=1", "--bps=24", "--sample-rate=44100",
+        "-5", f"--output-name={flac_path}", str(pcm_path),
+    ], check=True)
+    subprocess.run([
+        "metaflac", "--dont-use-padding", "--remove", "--block-type=VORBIS_COMMENT", str(flac_path)
+    ], check=True)
+    return flac_path.read_bytes()
+
+
+def manifest_case(case_id: str) -> dict[str, object]:
+    manifest = json.loads(MANIFEST_PATH.read_text())
+    columns = manifest["case_columns"]
+    for row in manifest["cases"]:
+        case = dict(zip(columns, row))
+        if case["case_id"] == case_id:
+            return case
+    raise AssertionError(f"missing manifest case {case_id}")
 
 
 def decode_subset(data: bytes) -> tuple[bytes, int, int]:
@@ -109,6 +156,58 @@ def decode_subset(data: bytes) -> tuple[bytes, int, int]:
     return bytes(out), rate, channels
 
 
+def assert_terminal_drain_rtl() -> None:
+    rtl = RTL_PATH.read_text()
+    ready_start = rtl.index("assign in_ready =")
+    ready_end = rtl.index("assign pcm_valid", ready_start)
+    ready_expr = rtl[ready_start:ready_end]
+    assert "(state == S_REJECT)" in ready_expr
+    assert "(state == S_ERROR)" in ready_expr
+    assert "assign pcm_valid    = (state == S_EMIT);" in rtl
+    assert "assign clean_reject = (state == S_REJECT);" in rtl
+    assert "assign stream_error = (state == S_ERROR);" in rtl
+
+
+def simulate_terminal_drain(stream: bytes, terminal_at: int) -> tuple[int, int, bool]:
+    """Model the F2 FIFO after a sticky reject/error decision.
+
+    The producer and consumer each move at most one byte per model cycle. Once
+    terminal_at bytes have been consumed, parser work is finished but in_ready
+    remains asserted, so all residual bytes continue to drain through exact EOS.
+    """
+    assert 0 < terminal_at <= len(stream)
+    produced = 0
+    consumed = 0
+    occupancy = 0
+    max_occupancy = 0
+    terminal = False
+    cycles = 0
+    limit = len(stream) * 4 + FIFO_DEPTH * 4
+
+    while consumed < len(stream):
+        if produced < len(stream) and occupancy < FIFO_DEPTH:
+            produced += 1
+            occupancy += 1
+
+        # Decoder remains ready both while parsing and after the sticky terminal
+        # decision, so one queued byte can always retire on a consumer cycle.
+        if occupancy:
+            occupancy -= 1
+            consumed += 1
+            if consumed >= terminal_at:
+                terminal = True
+
+        max_occupancy = max(max_occupancy, occupancy)
+        cycles += 1
+        assert cycles < limit, "terminal drain stalled"
+
+    assert terminal
+    assert produced == len(stream)
+    assert consumed == len(stream)
+    assert occupancy == 0
+    return consumed, max_occupancy, terminal
+
+
 def main() -> None:
     for tool, expected in (("flac", "flac 1.5.0"), ("metaflac", "metaflac 1.5.0")):
         path = shutil.which(tool)
@@ -118,10 +217,14 @@ def main() -> None:
         if got != expected:
             raise SystemExit(f"{tool} version mismatch: {got!r}")
 
+    assert_terminal_drain_rtl()
+
     with tempfile.TemporaryDirectory(prefix="d3-flac-") as td:
         root = Path(td)
+        supported_streams: dict[str, bytes] = {}
         for name, spec in EXPECTED.items():
             pcm, encoded = encode_case(root, name, spec["channels"], spec["rate"])
+            supported_streams[name] = encoded
             assert len(encoded) == spec["size"]
             assert sha(encoded) == spec["flac_sha256"]
             assert sha(pcm) == spec["pcm_sha256"]
@@ -144,11 +247,38 @@ def main() -> None:
                     cycle += 1
                 assert bytes(accepted) == decoded
 
+        unsupported = encode_unsupported_case(root)
+        unsupported_spec = manifest_case(UNSUPPORTED_CASE_ID)
+        assert len(unsupported) == unsupported_spec["flac_size_bytes"]
+        assert sha(unsupported) == unsupported_spec["flac_sha256"]
+        assert len(unsupported) > FIFO_DEPTH
+
+        # The 24-bit case is rejected from STREAMINFO after byte 42. It must then
+        # drain the rest of a >256-byte file without producing PCM or wedging F2.
+        consumed, _, terminal = simulate_terminal_drain(
+            unsupported, STREAMINFO_DECISION_BYTES
+        )
+        assert terminal and consumed == len(unsupported)
+
+        # A malformed marker enters S_ERROR on the first byte. The same terminal
+        # drain rule must retire the complete oversized transfer through EOS.
+        malformed = bytes([unsupported[0] ^ 0x01]) + unsupported[1:]
+        consumed, _, terminal = simulate_terminal_drain(malformed, 1)
+        assert terminal and consumed == len(malformed)
+
+        # Reset/re-arm is represented by starting from parser state again; both
+        # supported anchors must still decode exactly after either terminal path.
+        for encoded in supported_streams.values():
+            decoded, _, _ = decode_subset(encoded)
+            assert decoded
+
     print("D3 FLAC CONSTANT VERIFY PASS")
     print("  native FLAC: STREAMINFO-only, 4096-sample fixed blocks, CONSTANT subframes")
     print("  anchors: mono 44.1 kHz and stereo 48 kHz, 8192 samples each")
     print("  CRC: header CRC-8 and frame CRC-16 validated")
     print("  PCM: exact D1 SHA-256 for both anchors under deterministic output stalls")
+    print("  terminal drain: unsupported/error streams >256 bytes retire through EOS")
+    print("  re-arm: supported anchors decode after terminal reject/error reset")
 
 
 if __name__ == "__main__":
