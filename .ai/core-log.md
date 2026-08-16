@@ -193,3 +193,37 @@ Quartus compilation, post-fit resource/timing delta versus the accepted D0 denom
 - [ ] Passed — MiSTer validation of all four PCM modes, re-arm behavior, and video non-regression is pending
 
 ---
+## 006 COMMIT D2 081c006 2026-08-16T05:38:00-07:00
+
+#### Coming From:
+
+D2 081c006
+
+#### Purpose:
+
+Accept the user-reported D2 clean-build and MiSTer hardware-validation result, bind it to the uploaded build-evidence package, and close the codec-independent PCM/output milestone before any FLAC decoder RTL is started.
+
+#### Outcome:
+
+The user reports that all requested D2 tests pass. This accepts the requested software/clean-build/STA/hardware validation boundary: Audio Test Off is silent; 44.1 kHz mono/stereo and 48 kHz mono/stereo operate as requested; channel behavior is correct; repeated mode changes and reset re-arm cleanly; and the inherited MPEG/video behavior shows no reported regression.
+
+`.ai/current_results/cefcb94_build_logs.tar.gz` is present as Git blob `dc195a704d7b2624c7d35109c53b3c133bd175e8`, size 1,190,225 bytes. The filename reflects the metadata-only `cefcb94` core-log commit at the user's build HEAD; under the project cycle convention the executable D2 source boundary remains `081c006c8d8f6876493642ad1bc228c9261730f7` because metadata-only `.ai` commits do not change the cycle source SHA.
+
+The GitHub connector can verify the package identity but cannot decode the gzip payload, so this agent is not representing fitter/STA/resource numbers as independently extracted from that archive. The clean-build/timing result is accepted from the user's explicit all-tests-pass report, while the exact binary package is retained as the auditable build artifact for later local inspection if needed.
+
+D2 is accepted and closed as the hardware-proven common PCM/output milestone. The next engineering boundary is D3: a bounded FLAC decoder behind the established compressed-input and codec-independent PCM contracts. No D3 source work is authorized by this entry.
+
+#### Next Steps:
+
+Archive the accepted D2 build package under the executable cycle SHA, complete the required compatibility check against current MiSTer-Media-Player development, then prepare the D3 implementation plan and wait for explicit user approval before modifying FLAC RTL.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — user reports the requested clean Quartus/STA validation passes; build package is present in `.ai/current_results/`
+- [x] Passed — all requested D2 MiSTer audio modes, mode/reset re-arm, and MPEG/video non-regression checks reported passing
+
+---
