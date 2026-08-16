@@ -227,3 +227,37 @@ Archive the accepted D2 build package under the executable cycle SHA, complete t
 - [x] Passed — all requested D2 MiSTer audio modes, mode/reset re-arm, and MPEG/video non-regression checks reported passing
 
 ---
+## 007 COMMIT D2 081c006 2026-08-16T05:43:00-07:00
+
+#### Coming From:
+
+D2 081c006
+
+#### Purpose:
+
+Finalize the accepted D2 cycle by archiving its build evidence and checking the independent Audio implementation against the current MiSTer-Media-Player development line for immediate reintegration conflicts.
+
+#### Outcome:
+
+Archive commit `e84ac0ad20d24a0630d4aa1406a5471d6090ff37` (`(081c006) archiving results`) renames the accepted build artifact from `.ai/current_results/cefcb94_build_logs.tar.gz` to `.ai/archived_results/081c006_build_logs.tar.gz` without changing its Git blob `dc195a704d7b2624c7d35109c53b3c133bd175e8`. `.ai/current_results/` is returned to its `.gitkeep`-only state.
+
+The current MiSTer-Media-Player `master` metadata tip is `16eec4fc7ddd674a7e09ca450e3ec40407fb8430`; its current functional source commit is `b11590cf77febb7364a13e628a64e107fc2a8620` (`Consolidate generalized P parser`). The main project's current work is parser consolidation. At `b11590c`, `MediaPlayer_top_00.svh` remains exact blob `a4d085e655e0566d2694d0701cbbf9372763fd85`, identical to the frozen Audio starting point, so the top-level Audio fork anchors have not moved. The opening `files.qip` insertion context used by D2 is also unchanged.
+
+No immediate D2 reintegration conflict is present. The main project's `files.qip` has evolved elsewhere as parser sources changed, so eventual reintegration must merge the three Audio source-list entries into the then-current main source list rather than replacing main's `files.qip` with the frozen Audio copy. The standalone `rtl/audio/` paths remain isolated from the main parser work.
+
+D2 is fully closed. D0 remains the zero-change denominator, D1 remains the deterministic FLAC corpus boundary, and D2 is the hardware-proven common PCM/output boundary. The next proposed development cycle is D3, bounded FLAC decode into the existing PCM contract; implementation requires explicit user approval.
+
+#### Next Steps:
+
+Prepare and present the D3 bounded-FLAC implementation/validation boundary. Do not modify FLAC RTL until the user explicitly approves that plan.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — D2 build evidence archived under the executable cycle SHA
+- [x] Passed — D2 hardware acceptance closed; compatibility review finds no immediate reintegration conflict
+
+---
