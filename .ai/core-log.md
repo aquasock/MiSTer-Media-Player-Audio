@@ -85,7 +85,9 @@ For D0 accounting, the accepted baseline resource/timing shape is the hardware-q
 
 The GitHub connector can verify the binary package identity and repository/source equivalence but does not decode the contents of this 1.2 MB tar.gz archive. The numerical baseline above is therefore accepted under the user's instruction to use `40ec769_build_logs.tar.gz` together with the previously qualified identical executable source evidence, rather than being represented as a fresh connector-side extraction of the archive.
 
-Hardware behavior for D0 is inherited from the exact hardware-qualified v0.4.0 executable source state because no synthesized executable source differs at `40ec769`. D0 is therefore closed as the zero-change denominator for subsequent Audio resource/timing comparisons.
+Hardware validation is now explicit rather than inherited: on 2026-08-16 the user reports that all requested D0 MiSTer hardware tests pass on the standard target, with no reported regression, stall, or crash. Together with the source-identity and build evidence above, D0 is closed as the accepted zero-change denominator for subsequent Audio resource/timing comparisons.
+
+The accepted `40ec769_build_logs.tar.gz` blob was archived under `.ai/archived_results/`, and the three byte-identical active copies were removed from `.ai/current_results/` in commit `14668e2d6063d868be0fcbe99214c1ee315d091a` (`(40ec769) archiving results`).
 
 #### Next Steps:
 
@@ -98,6 +100,6 @@ Begin D1 with the deterministic FLAC corpus/generator/manifest boundary. Preserv
 #### Status:
 
 - [x] Built — `40ec769_build_logs.tar.gz` accepted as D0 build evidence; intervening source changes do not alter the executable baseline
-- [x] Passed — D0 zero-change resource/timing/hardware baseline accepted and closed
+- [x] Passed — all requested D0 MiSTer hardware tests reported passing; D0 baseline accepted and closed
 
 ---
