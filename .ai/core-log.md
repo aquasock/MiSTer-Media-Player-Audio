@@ -261,3 +261,53 @@ Prepare and present the D3 bounded-FLAC implementation/validation boundary. Do n
 - [x] Passed — D2 hardware acceptance closed; compatibility review finds no immediate reintegration conflict
 
 ---
+## 008 COMMIT D3 f9d6c0f 2026-08-16T05:55:39-07:00
+
+#### Coming From:
+
+D2 081c006
+
+#### Purpose:
+
+Implement the approved first bounded native-FLAC decode boundary behind the D2 codec-independent PCM contract, proving real FLAC marker/metadata/frame parsing for the deterministic D1 silence anchors without pulling FIXED/LPC/Rice decoding or broader metadata support forward into D3.
+
+#### Outcome:
+
+The D3 source boundary spans six sequential GitHub `main` commits from `2cceef97b96a4de426124822eb92273e6daab924` (`Add D3 bounded FLAC decoder`) through integration tip `f9d6c0f3b60c5426642e92f5e5b997f3d74c852a` (`Add D3 FLAC sources to Quartus project`). Comparison from closed-D2 metadata tip `5948c067c1323d771e238250ad52c0877756af06` through `f9d6c0f` reports exactly six changed paths: `MediaPlayer_top_00.svh`, `MediaPlayer_top_07.svh`, `files.qip`, `rtl/audio/audio_flac_constant_decoder.sv`, `rtl/audio/audio_flac_stream_fifo.sv`, and `tools/streams/verify_d3_flac_constant.py`. No H.262 decoder, video reconstruction/presentation, DDR, PLL, or SDC file changes.
+
+D1 corpus inspection showed that `flac_00_silence_mono_44100` is a 64-byte native FLAC stream and `flac_01_silence_stereo_48000` is a 70-byte native FLAC stream. Each contains one final 34-byte STREAMINFO metadata block followed by exactly two fixed 4096-sample frames using independent-channel CONSTANT subframes. Their pinned encoded SHA-256 values are `035d023a6b960325db67252ece6d4b29cf7e0a72558030af129e7ba2b3f70e4e` and `660f237bdb3fa3474dcca80c8b6f63126aaaf8a2105a9904eca596f1cd79f5a4`; their exact golden PCM hashes remain the D1 source hashes `4fe7b59af6de3b665b67788cc2f99892ab827efae3a467342b3bb4e3bc8e5bfe` and `c35020473aed1b4642cd726cad727b63fff2824ad68cedd7ffb73c7cbd890479`.
+
+The decoder implements the native `fLaC` marker, one final STREAMINFO block, fixed 4096-sample block sizing, 16-bit mono/stereo stream properties at 44.1/48 kHz, fixed-block single-byte frame numbers, independent CONSTANT subframes, FLAC frame-header CRC-8, frame CRC-16, exact PCM sample counting, exact-final-byte EOS, and sticky `EOS_OK` / `CLEAN_REJECT` / `STREAM_ERROR` terminal states. Valid FLAC syntax outside this deliberately narrow D3 envelope rejects cleanly instead of being misdecoded; malformed marker/sequence/CRC/EOS terminates as stream error. PCM is released only after its complete compressed frame has passed CRC validation.
+
+`MediaPlayer_top_00.svh` adds F2 `FLAC` file loading as a sibling HPS transport using its own 256-byte DCFIFO from `clk_sys` to `clk_mpeg2`; F1 and all MPEG stream-readiness logic remain video-only. Audio-local reset stretching now also covers FLAC file starts and holds HPS with `ioctl_wait` while the compressed/audio output paths are cleared, preventing loss of the first file byte. Download completion is synchronized into the decoder domain and becomes EOS only after the compressed FIFO drains. D2 Audio Test modes remain an override; with Audio Test Off, the FLAC decoder owns the established D2 PCM valid/ready contract. A successful silence-anchor FLAC terminal state is ORed into USER so real hardware has an observable success indication despite the decoded PCM being silent.
+
+The deterministic reference verifier was run locally with exact `flac 1.5.0` / `metaflac 1.5.0` and reports `D3 FLAC CONSTANT VERIFY PASS`. It regenerates both D1 anchor streams, verifies their exact encoded sizes/hashes, parses STREAMINFO and both frames, validates every frame-header CRC-8 and frame CRC-16, reconstructs the exact 8192-sample PCM stream, matches the pinned D1 PCM SHA-256, and proves accepted PCM remains invariant under four deterministic output-ready stall profiles.
+
+`.ai/core-standards.md` still does not contain FLAC. D3 therefore used RFC 9639, `Free Lossless Audio Codec (FLAC)`, IETF Standards Track, December 2024, as the external normative format source. RFC 9639 defines the native marker/STREAMINFO/frame layout, frame-header CRC-8, CONSTANT subframe coding, and frame CRC-16 used by this implementation. Adding RFC 9639 to the controlled standards library remains a separate metadata action.
+
+Quartus compilation, fitted resource/timing delta versus D0/D2, physical F2 transfer behavior, USER terminal indication, and MiSTer regression testing remain pending. D3 is therefore implemented but not yet hardware-accepted.
+
+#### Next Steps:
+
+1. Pull current Audio `main` and run `python3 tools/streams/verify_d3_flac_constant.py`; expect `D3 FLAC CONSTANT VERIFY PASS`.
+2. Run `python3 tools/streams/generate_flac_corpus.py` to materialize the ignored D1 media, then use `tools/streams/generated/flac/flac_00_silence_mono_44100.flac` and `flac_01_silence_stereo_48000.flac` for F2 hardware tests.
+3. Remove `db/`, `incremental_db/`, and `output_files/`; run `quartus_sh --flow compile MediaPlayer` and `quartus_sta -t tools/phase1p_timing.tcl`.
+4. On MiSTer, start from reset with Audio Test Off and no prior successful video diagnostic. Load each supported FLAC through F2 independently; each should remain silent by design and finish with solid USER, proving the exact supported decode/EOS path. Reload each stream and reset between loads to prove re-arm. Load `flac_neg_02_unsupported_24bit_mono_44100.flac`; it must terminate without USER success, hang, or corruption of later supported reloads.
+5. Re-run all four D2 Audio Test modes and the standing MPEG video regressions to prove the new F2 transport/decoder does not couple into video readiness or break the D2 output path.
+6. Push `f9d6c0f_build_logs.tar.gz` plus any D3 hardware notes/resources into `.ai/current_results/` and report the result. Compare ALMs/registers/RAM/DSP/PLL and timing against D0 and D2 before closing D3 or expanding FLAC syntax.
+
+#### Files Modified:
+
+- `MediaPlayer_top_00.svh`
+- `MediaPlayer_top_07.svh`
+- `files.qip`
+- `rtl/audio/audio_flac_constant_decoder.sv`
+- `rtl/audio/audio_flac_stream_fifo.sv`
+- `tools/streams/verify_d3_flac_constant.py`
+
+#### Status:
+
+- [ ] Built — deterministic D3 reference verification passes; clean Quartus build/resource/timing evidence is pending
+- [ ] Passed — MiSTer F2 supported-stream/re-arm/clean-reject and D2/video regression validation is pending
+
+---
