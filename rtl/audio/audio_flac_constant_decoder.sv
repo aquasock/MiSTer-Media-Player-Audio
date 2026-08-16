@@ -87,9 +87,14 @@ reg [12:0] emit_remaining;
 wire input_fire = in_valid && in_ready;
 wire output_fire = pcm_valid && pcm_ready;
 
+// kate - D3 terminal-drain correction: reject/error status remains sticky, but
+// compressed input must continue to drain so a valid unsupported or malformed
+// file cannot fill the 256-byte F2 FIFO and hold HPS ioctl_wait indefinitely.
 assign in_ready =
     (state <= S_FRAME_CRC_LO) ||
-    (state == S_WAIT_EOS);
+    (state == S_WAIT_EOS) ||
+    (state == S_REJECT) ||
+    (state == S_ERROR);
 
 assign pcm_valid    = (state == S_EMIT);
 assign pcm_left     = frame_left;
