@@ -123,7 +123,7 @@ The generated corpus contains 27 valid or valid-but-first-milestone-unsupported 
 
 A clean local regeneration using the pinned tools reproduces the tracked manifest exactly. Python compilation succeeds, and `verify_flac_corpus.py` reports `VERIFY PASS: 27 valid/unsupported cases, 2 invalid cases, and 8 transport profiles`. The verifier fails closed on tool versions, schema/content, generated file set, hashes, reference FLAC test/decode, observed feature inventory, metadata inventory, and transport-profile signatures.
 
-The observed encoded corpus spans FLAC subframe types `CONSTANT`, `FIXED`, `LPC`, and `VERBATIM`; channel assignments `INDEPENDENT`, `MID_SIDE`, and `RIGHT_SIDE`; fixed predictor orders 0/1/2; LPC order 8; and Rice partition orders 0/3/4/5. These are corpus observations only and do not claim the future FPGA decoder supports all observed features.
+The observed encoded corpus spans FLAC subframe types `CONSTANT`, `FIXED`, `LPC`, and `VERBATIM`; channel assignments `INDEPENDENT`, `MID_SIDE`, and `RIGHT_SIDE`; fixed predictor orders 0/1/2; LPC order 8; Rice partition orders 0/3/4/5. These are corpus observations only and do not claim the future FPGA decoder supports all observed features.
 
 `.ai/core-standards.md` still has no controlled FLAC source record. D1 used the official Xiph FLAC 1.5.0 reference tools/documentation for corpus generation and validation; any standards-library addition remains a separate explicitly scoped metadata boundary.
 
@@ -437,5 +437,38 @@ Await explicit user approval of the D3 corrective proposal already recorded in e
 
 - [x] Built — existing D3 failure build has been exercised; this entry is workflow metadata only
 - [ ] Passed — D3 remains open; corrective source proposal awaits explicit user approval
+
+---
+## 013 COMMIT D3 b651ab4 2026-08-16T08:06:00-07:00
+
+#### Coming From:
+
+D3 152b8f8
+
+#### Purpose:
+
+Implement the approved D3 terminal-drain correction so valid-unsupported or malformed FLAC input cannot permanently fill the F2 compressed-audio FIFO after the decoder reaches a sticky terminal decision.
+
+#### Outcome:
+
+The approved source boundary spans sequential commits `f64fba927c8f0490ef13ab4f2e001a696eb1a504` (`Drain D3 FLAC terminal input`) and `b651ab4b8b1e093adc7571e23fed63743f5be351` (`Verify D3 FLAC terminal drain`). Aggregate comparison from the approved workflow/proposal tip `27c7f1587d21d6059701e753ba9ea3eaaf98aea8` through `b651ab4` changes exactly two files: `rtl/audio/audio_flac_constant_decoder.sv` and `tools/streams/verify_d3_flac_constant.py`. No top-level transport, FIFO sizing, PCM path, MPEG/video, QIP, clock, DDR, or SDC file changed. `b651ab4` is the official D3 build hash for this corrective cycle.
+
+`audio_flac_constant_decoder.sv` now keeps `in_ready` asserted in sticky `S_REJECT` and `S_ERROR` in addition to the existing parser and `S_WAIT_EOS` states. Terminal status semantics are unchanged: `clean_reject` and `stream_error` remain sticky, `pcm_valid` remains restricted to `S_EMIT`, and rejected/error input therefore produces no new PCM while residual compressed bytes continue to drain. This removes the identified permanent-FIFO-full mechanism that could hold HPS `ioctl_wait` indefinitely after an early terminal decision.
+
+The D3 verifier now checks the RTL terminal-ready contract, deterministically regenerates the tracked valid-unsupported 24-bit mono case, verifies it against the D1 manifest and confirms it exceeds the 256-byte transport FIFO, models rejection at the 42-byte STREAMINFO decision point through complete transfer drain, models an oversized malformed-marker error from byte one, and verifies reset/re-arm into both supported D3 anchors. The verifier source is syntactically valid Python; full pinned-tool execution and hardware proof remain part of the user validation step.
+
+#### Next Steps:
+
+Pull current Audio `main`, run `python3 tools/streams/verify_d3_flac_constant.py`, then perform a clean Quartus/STA build. On MiSTer, repeatedly load `flac_neg_02_unsupported_24bit_mono_44100.flac` and confirm USER remains off with no crash or hang; immediately follow it with each supported silence anchor and confirm normal USER success. Re-run reset/re-arm, all four D2 Audio Test modes, and the standing MPEG/video regressions. Push the resulting build/test outputs into root `output_files/` and `phase1p_timing_reports/` and report the result. Under the current workflow, the agent will then inspect those active results, delete their contents, perform the latest MiSTer-Media-Player compatibility check, and continue according to the evidence.
+
+#### Files Modified:
+
+- `rtl/audio/audio_flac_constant_decoder.sv`
+- `tools/streams/verify_d3_flac_constant.py`
+
+#### Status:
+
+- [ ] Built — source correction and deterministic verifier extension are committed; clean Quartus/STA build is pending
+- [ ] Passed — corrected unsupported/error terminal drain and full D3 MiSTer regression matrix are pending
 
 ---
