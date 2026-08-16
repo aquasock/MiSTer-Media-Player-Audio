@@ -103,3 +103,35 @@ Begin D1 with the deterministic FLAC corpus/generator/manifest boundary. Preserv
 - [x] Passed — all requested D0 MiSTer hardware tests reported passing; D0 baseline accepted and closed
 
 ---
+## 004 PLAN D1 40ec769 2026-08-16T04:54:00-07:00
+
+#### Coming From:
+
+D0 40ec769
+
+#### Purpose:
+
+Implement the approved D1 deterministic FLAC corpus/generator/manifest boundary without changing RTL, Quartus source lists, constraints, transport integration, clocks, DDR, or the common PCM output path.
+
+#### Outcome:
+
+The approved D1 source boundary is limited to deterministic local test infrastructure under `tools/streams/` plus a generated-media ignore rule. The corpus will use algorithmically generated integer PCM only; pin `flac 1.5.0` and `metaflac 1.5.0`; assign stable case IDs including concrete short-length IDs; record source PCM, encoded FLAC, and golden decoded PCM SHA-256 values; record exact command policy, metadata blocks, frame/block/subframe/channel-assignment feature inventory, sample counts, provenance, and licensing; define deterministic transport/backpressure profile signatures; and include deterministic truncated, corrupted, and valid-but-first-milestone-unsupported streams.
+
+The verifier is fail-closed: tool version, manifest schema/content, file set, hashes, reference `flac --test`, fresh reference decode, feature inventory, and deterministic transport-profile signatures must all match. Generated `.pcm` and `.flac` media remains local under `tools/streams/generated/flac/` and is not committed. FLAC support claims remain separate from corpus observations because D1 contains no decoder RTL.
+
+`.ai/core-standards.md` currently contains no FLAC source record. D1 therefore uses the official Xiph FLAC 1.5.0 release and command-line documentation as the external tool authority; any controlled standards-library addition will be handled separately rather than broadening this source commit.
+
+#### Next Steps:
+
+Publish the D1 tooling/manifest source as one focused commit, regenerate it with the pinned reference tools, run the fail-closed verifier, then replace this planning entry with the exact D1 commit result and proceed to D2 only after D1 evidence is accepted.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [ ] Built — D1 tooling implementation not yet committed
+- [x] Passed — D1 source boundary explicitly approved by the user
+
+---
