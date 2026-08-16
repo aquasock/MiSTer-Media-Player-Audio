@@ -373,3 +373,37 @@ Pull current Audio `main`, perform a clean Quartus/STA build, and verify lowerca
 - [ ] Passed — corrected F2 file visibility and D3 hardware regression matrix are pending
 
 ---
+## 011 COMMIT D3 152b8f8 2026-08-16T07:50:00-07:00
+
+#### Coming From:
+
+D3 152b8f8
+
+#### Purpose:
+
+Record the D3 unsupported-stream hardware failure and define a bounded transport-safety correction before changing source. The valid-but-unsupported 24-bit FLAC correctly leaves USER deasserted, but the user reports that loading it consistently crashes or locks the MiSTer instead of completing as a clean reject.
+
+#### Outcome:
+
+The active build evidence includes `.ai/current_results/63af22f_build_logs.tar.gz` (Git blob `4cc3d265007935c988b9e919e33e686b94991222`, 1,161,574 bytes). Its filename reflects the metadata HEAD used for the build; the executable D3 source boundary remains `152b8f8` because metadata-only `.ai` commits do not change the cycle source SHA. Root `output_files/` and `phase1p_timing_reports/` are not currently present on GitHub, so this package is retained as build-identity evidence and is not archived while D3 is failing.
+
+RTL inspection identifies a direct transport-deadlock mechanism consistent with the hardware report. `audio_flac_constant_decoder.sv` asserts `in_ready` only while parsing through `S_FRAME_CRC_LO` or in `S_WAIT_EOS`; both terminal `S_REJECT` and `S_ERROR` are sticky and deassert `in_ready`. Top-level F2 transport only reads the compressed FIFO while decoder `in_ready` is asserted, while HPS `ioctl_wait` is asserted if that FIFO becomes full. The D1 unsupported case is a 4096-sample, 24-bit mono LFSR FLAC, so it is rejected from STREAMINFO before most compressed data has arrived. Continuing HPS transfer can therefore fill the 256-byte compressed FIFO after the decoder has stopped consuming it, producing an indefinite HPS-side wait. This is the leading root-cause inference for the observed MiSTer crash/lockup.
+
+Proposed source boundary: modify only `rtl/audio/audio_flac_constant_decoder.sv` and `tools/streams/verify_d3_flac_constant.py`. Keep `clean_reject` / `stream_error` sticky and emit no PCM after either terminal decision, but keep compressed-input readiness asserted in `S_REJECT` and `S_ERROR` so all remaining bytes are consumed and discarded through exact EOS. Extend the deterministic verifier to prove an early reject/error cannot backpressure a stream larger than the 256-byte transport FIFO, that terminal status remains correct with zero PCM, that exact EOS completes without a transport stall, and that reset/re-arm immediately permits a supported anchor stream afterward. Include the existing valid-unsupported 24-bit case and malformed-stream coverage. Do not add 24-bit decoding, FIXED/LPC/Rice support, metadata expansion, top-level transport changes, FIFO resizing, MPEG/video changes, QIP changes, clocks, DDR, or SDC changes.
+
+Validation after approval: run the deterministic D3 verifier, perform a clean Quartus/STA build, load the unsupported 24-bit case repeatedly and confirm USER remains off with no MiSTer crash/hang, then load a supported anchor immediately afterward and confirm normal USER success. Re-run both supported D3 anchors, reset/re-arm, D2 Audio Test modes, and MPEG/video regressions. D3 remains open until this clean-reject behavior is hardware-proven.
+
+#### Next Steps:
+
+Await explicit user approval. If approved, implement the two-file terminal-drain/verifier correction and commit it as the next official D3 build hash. Do not archive the failing D3 build evidence and do not begin D4.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — a runnable `152b8f8` D3 build was produced and exercised; build-identity package is present in `current_results`
+- [ ] Passed — unsupported 24-bit clean-reject fails because MiSTer consistently crashes/locks; corrective source work requires approval
+
+---
