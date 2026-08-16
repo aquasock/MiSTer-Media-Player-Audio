@@ -343,3 +343,33 @@ Await explicit user approval. If approved, make the single `MediaPlayer_top_00.s
 - [ ] Passed — awaiting user approval for the one-line D3 selector correction
 
 ---
+## 010 COMMIT D3 152b8f8 2026-08-16T07:29:37-07:00
+
+#### Coming From:
+
+D3 97399dc
+
+#### Purpose:
+
+Apply the approved minimal MiSTer F2 selector correction so normal `.flac` files are visible without changing the D3 decoder or transport boundary.
+
+#### Outcome:
+
+Exact GitHub source commit `152b8f8ae2a51882be4b1f8dfb7f03e77ef0daaf` (`Fix D3 FLAC file selector`) modifies exactly one line in exactly one file: `MediaPlayer_top_00.svh` changes `F2,FLAC,Open FLAC Audio;` to `F2,FL*,Open FLAC Audio;`. GitHub's commit diff confirms no other source path or line changed.
+
+This preserves the existing F2 index, compressed-audio FIFO, FLAC decoder, D2 PCM contract, MPEG/video readiness, QIP, clocks, DDR, and timing constraints. `152b8f8` is the new official D3 build hash for this corrective validation cycle.
+
+#### Next Steps:
+
+Pull current Audio `main`, perform a clean Quartus/STA build, and verify lowercase `.flac` files are now visible/selectable through F2. Then repeat the existing D3 supported mono/stereo silence-anchor tests, reset/re-arm, unsupported 24-bit clean-reject followed by supported reload, all four D2 Audio Test modes, and the standing MPEG/video regressions. Place any additional diagnostic resources in `.ai/current_results/`; the normal build and timing outputs belong in root `output_files/` and `phase1p_timing_reports/` under the current workflow. Report the results before any archive or compatibility action.
+
+#### Files Modified:
+
+- `MediaPlayer_top_00.svh`
+
+#### Status:
+
+- [ ] Built — source correction committed; clean Quartus/STA build is pending
+- [ ] Passed — corrected F2 file visibility and D3 hardware regression matrix are pending
+
+---
