@@ -407,3 +407,35 @@ Await explicit user approval. If approved, implement the two-file terminal-drain
 - [ ] Passed — unsupported 24-bit clean-reject fails because MiSTer consistently crashes/locks; corrective source work requires approval
 
 ---
+## 012 COMMIT D3 152b8f8 2026-08-16T08:00:00-07:00
+
+#### Coming From:
+
+D3 152b8f8
+
+#### Purpose:
+
+Apply the current authoritative `core.md` Standard Workflow to the open D3 failure cycle and remove obsolete result-archive/current-results handling from the active handoff instructions without changing the already proposed source boundary.
+
+#### Outcome:
+
+The current `core.md` workflow now defines the normal result handoff as root `output_files/` and `phase1p_timing_reports/`, followed by user result notification, agent inspection, deletion of the contents of those two folders, a compatibility check against the latest MiSTer-Media-Player commit, and then repetition of the cycle. The Standard Workflow contains no archive step and no `.ai/current_results/` handoff step. Historical `core-log.md` entries remain historical evidence and are not rewritten to retroactively match the new procedure.
+
+For the present D3 failure, entry 011 remains the active proposed source boundary and still requires explicit user approval before any source modification. No source implementation is performed by this workflow correction. If that proposal is approved, the next source commit becomes the official build hash; the user then builds/tests and pushes the requested build/test outputs into root `output_files/` and `phase1p_timing_reports/`. After the user reports the result, inspect those active results, delete their contents, check the latest MiSTer-Media-Player compatibility state, and then either close D3 or begin the next approved cycle as warranted by the evidence.
+
+The existing `.ai/current_results/` material is not part of the current Standard Workflow and will not be used as the normal handoff path or archived as part of this cycle unless the user explicitly directs otherwise.
+
+#### Next Steps:
+
+Await explicit user approval of the D3 corrective proposal already recorded in entry 011. Do not modify source before approval. After any approved source commit, follow current `core.md` workflow steps 5 through 10 exactly.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — existing D3 failure build has been exercised; this entry is workflow metadata only
+- [ ] Passed — D3 remains open; corrective source proposal awaits explicit user approval
+
+---
