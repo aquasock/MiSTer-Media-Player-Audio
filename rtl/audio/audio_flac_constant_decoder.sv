@@ -1,16 +1,17 @@
-// kate - D3 bounded native-FLAC decoder.
+// kate - D3 bounded native-FLAC decoder with D4 VERBATIM extension.
 //
-// D3 intentionally supports only the first hardware milestone envelope:
+// The hardware envelope remains deliberately narrow:
 //   * native FLAC marker plus one final STREAMINFO metadata block,
-//   * fixed 4096-sample blocks,
-//   * 16-bit mono 44.1 kHz or stereo 48 kHz,
+//   * fixed 4096-sample blocks and exactly 8192 interchannel samples,
+//   * 16-bit mono/stereo at 44.1/48 kHz for the D3 CONSTANT anchors,
 //   * independent-channel CONSTANT subframes,
-//   * one-byte frame numbers (the D1 8192-sample anchor streams use 0 and 1),
+//   * D4 adds independent 16-bit mono 48 kHz VERBATIM subframes,
+//   * one-byte frame numbers (the D1 8192-sample streams use 0 and 1),
 //   * validated frame-header CRC-8 and frame CRC-16.
 //
-// Valid FLAC syntax outside that envelope terminates with clean_reject.  Broken
-// marker/sequence/CRC/EOS terminates with stream_error.  The decoder emits PCM
-// only after a complete frame has validated, so corrupted frame data cannot leak
+// Valid FLAC syntax outside that envelope terminates with clean_reject. Broken
+// marker/sequence/CRC/EOS terminates with stream_error. PCM is released only
+// after a complete frame has validated, so corrupted frame data cannot leak
 // into the common PCM contract.
 
 module audio_flac_constant_decoder
@@ -36,34 +37,37 @@ module audio_flac_constant_decoder
 );
 
 localparam [5:0]
-    S_MAGIC0      = 6'd0,
-    S_MAGIC1      = 6'd1,
-    S_MAGIC2      = 6'd2,
-    S_MAGIC3      = 6'd3,
-    S_META0       = 6'd4,
-    S_META1       = 6'd5,
-    S_META2       = 6'd6,
-    S_META3       = 6'd7,
-    S_STREAMINFO  = 6'd8,
-    S_FRAME_SYNC0 = 6'd9,
-    S_FRAME_SYNC1 = 6'd10,
-    S_FRAME_CODE  = 6'd11,
-    S_FRAME_FMT   = 6'd12,
-    S_FRAME_NUM   = 6'd13,
-    S_FRAME_HCRC  = 6'd14,
-    S_LEFT_HDR    = 6'd15,
-    S_LEFT_HI     = 6'd16,
-    S_LEFT_LO     = 6'd17,
-    S_RIGHT_HDR   = 6'd18,
-    S_RIGHT_HI    = 6'd19,
-    S_RIGHT_LO    = 6'd20,
-    S_FRAME_CRC_HI= 6'd21,
-    S_FRAME_CRC_LO= 6'd22,
-    S_EMIT        = 6'd23,
-    S_WAIT_EOS    = 6'd24,
-    S_EOS_OK      = 6'd25,
-    S_REJECT      = 6'd26,
-    S_ERROR       = 6'd27;
+    S_MAGIC0       = 6'd0,
+    S_MAGIC1       = 6'd1,
+    S_MAGIC2       = 6'd2,
+    S_MAGIC3       = 6'd3,
+    S_META0        = 6'd4,
+    S_META1        = 6'd5,
+    S_META2        = 6'd6,
+    S_META3        = 6'd7,
+    S_STREAMINFO   = 6'd8,
+    S_FRAME_SYNC0  = 6'd9,
+    S_FRAME_SYNC1  = 6'd10,
+    S_FRAME_CODE   = 6'd11,
+    S_FRAME_FMT    = 6'd12,
+    S_FRAME_NUM    = 6'd13,
+    S_FRAME_HCRC   = 6'd14,
+    S_LEFT_HDR     = 6'd15,
+    S_LEFT_HI      = 6'd16,
+    S_LEFT_LO      = 6'd17,
+    S_RIGHT_HDR    = 6'd18,
+    S_RIGHT_HI     = 6'd19,
+    S_RIGHT_LO     = 6'd20,
+    S_FRAME_CRC_HI = 6'd21,
+    S_FRAME_CRC_LO = 6'd22,
+    S_EMIT         = 6'd23,
+    S_WAIT_EOS     = 6'd24,
+    S_EOS_OK       = 6'd25,
+    S_REJECT       = 6'd26,
+    S_ERROR        = 6'd27,
+    S_VERB_HI      = 6'd28,
+    S_VERB_LO      = 6'd29,
+    S_EMIT_LOAD    = 6'd30;
 
 reg [5:0] state;
 reg [5:0] streaminfo_index;
@@ -84,6 +88,13 @@ reg signed [15:0] frame_left;
 reg signed [15:0] frame_right;
 reg [12:0] emit_remaining;
 
+// kate - D4 VERBATIM frame staging. A complete 4096-sample frame is retained
+// until its CRC-16 validates, preserving the D3 no-corrupt-PCM contract.
+reg               frame_verbatim;
+reg [11:0]        verbatim_index;
+reg [7:0]         verbatim_hi;
+reg signed [15:0] verbatim_frame_mem [0:4095];
+
 wire input_fire = in_valid && in_ready;
 wire output_fire = pcm_valid && pcm_ready;
 
@@ -92,6 +103,8 @@ wire output_fire = pcm_valid && pcm_ready;
 // file cannot fill the 256-byte F2 FIFO and hold HPS ioctl_wait indefinitely.
 assign in_ready =
     (state <= S_FRAME_CRC_LO) ||
+    (state == S_VERB_HI) ||
+    (state == S_VERB_LO) ||
     (state == S_WAIT_EOS) ||
     (state == S_REJECT) ||
     (state == S_ERROR);
@@ -152,9 +165,13 @@ always @(posedge clk) begin
         frame_left           <= 16'sd0;
         frame_right          <= 16'sd0;
         emit_remaining       <= 13'd0;
+        frame_verbatim       <= 1'b0;
+        verbatim_index       <= 12'd0;
+        verbatim_hi          <= 8'd0;
     end
     else if (in_eos && !in_valid &&
              (state != S_EMIT) &&
+             (state != S_EMIT_LOAD) &&
              (state != S_WAIT_EOS) &&
              (state != S_EOS_OK) &&
              (state != S_REJECT) &&
@@ -177,7 +194,7 @@ always @(posedge clk) begin
                 if (in_data == 8'h43) state <= S_META0; else state <= S_ERROR;
             end
 
-            // D3 supports exactly one final STREAMINFO block.  Other valid
+            // D3/D4 supports exactly one final STREAMINFO block. Other valid
             // metadata layouts are deferred rather than misparsed.
             S_META0: if (input_fire) begin
                 if (in_data != 8'h80) state <= S_REJECT;
@@ -228,6 +245,7 @@ always @(posedge clk) begin
                         stream_total_samples <= streaminfo_props[35:0];
                         output_sample_count  <= 36'd0;
                         frame_index          <= 8'd0;
+                        frame_verbatim       <= 1'b0;
                         state                <= S_FRAME_SYNC0;
                     end
                 end
@@ -285,11 +303,24 @@ always @(posedge clk) begin
             end
 
             S_LEFT_HDR: if (input_fire) begin
-                if (in_data != 8'h00) state <= S_REJECT;
-                else begin
+                if (in_data == 8'h00) begin
+                    frame_verbatim <= 1'b0;
                     frame_crc16 <= crc16_byte(frame_crc16, in_data);
                     state <= S_LEFT_HI;
                 end
+                else if (in_data == 8'h02) begin
+                    // kate - D4: 0x02 is a VERBATIM subframe with no wasted bits.
+                    // Keep the first milestone mono/48 kHz only; stereo and
+                    // 44.1 kHz VERBATIM remain cleanly unsupported.
+                    if (stream_stereo || !stream_rate_48k) state <= S_REJECT;
+                    else begin
+                        frame_verbatim <= 1'b1;
+                        verbatim_index <= 12'd0;
+                        frame_crc16 <= crc16_byte(frame_crc16, in_data);
+                        state <= S_VERB_HI;
+                    end
+                end
+                else state <= S_REJECT;
             end
             S_LEFT_HI: if (input_fire) begin
                 left_hi <= in_data;
@@ -321,6 +352,24 @@ always @(posedge clk) begin
                 state <= S_FRAME_CRC_HI;
             end
 
+            // RFC 9639 VERBATIM stores each sample unencoded in sequential order.
+            // D4's 16-bit target is byte-aligned, big-endian signed two's-complement.
+            S_VERB_HI: if (input_fire) begin
+                verbatim_hi <= in_data;
+                frame_crc16 <= crc16_byte(frame_crc16, in_data);
+                state <= S_VERB_LO;
+            end
+            S_VERB_LO: if (input_fire) begin
+                verbatim_frame_mem[verbatim_index] <= {verbatim_hi, in_data};
+                frame_crc16 <= crc16_byte(frame_crc16, in_data);
+                if (verbatim_index == 12'd4095)
+                    state <= S_FRAME_CRC_HI;
+                else begin
+                    verbatim_index <= verbatim_index + 12'd1;
+                    state <= S_VERB_HI;
+                end
+            end
+
             S_FRAME_CRC_HI: if (input_fire) begin
                 frame_crc_hi <= in_data;
                 state <= S_FRAME_CRC_LO;
@@ -329,8 +378,19 @@ always @(posedge clk) begin
                 if ({frame_crc_hi, in_data} != frame_crc16) state <= S_ERROR;
                 else begin
                     emit_remaining <= 13'd4096;
-                    state <= S_EMIT;
+                    if (frame_verbatim) begin
+                        verbatim_index <= 12'd0;
+                        state <= S_EMIT_LOAD;
+                    end
+                    else state <= S_EMIT;
                 end
+            end
+
+            // kate - D4 synchronous frame-buffer read. The loaded sample remains
+            // stable for the whole valid/ready stall interval in S_EMIT.
+            S_EMIT_LOAD: begin
+                frame_left <= verbatim_frame_mem[verbatim_index];
+                state <= S_EMIT;
             end
 
             S_EMIT: if (output_fire) begin
@@ -346,6 +406,10 @@ always @(posedge clk) begin
                 end
                 else begin
                     emit_remaining <= emit_remaining - 13'd1;
+                    if (frame_verbatim) begin
+                        verbatim_index <= verbatim_index + 12'd1;
+                        frame_left <= verbatim_frame_mem[verbatim_index + 12'd1];
+                    end
                 end
             end
 
