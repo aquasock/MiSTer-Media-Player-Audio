@@ -630,3 +630,43 @@ Await explicit user approval. If approved, make only the `audio_control_src_fifo
 - [ ] Passed — D3 remains open; proposed one-line Audio mailbox implementation correction awaits explicit user approval
 
 ---
+## 018 COMMIT D4 149c5be 2026-08-16T17:58:00-07:00
+
+#### Coming From:
+
+D3 149c5be
+
+#### Purpose:
+
+Close D3 on the accepted hardware/timing evidence and record the explicitly approved first D4 FLAC syntax expansion before changing executable source. Also record the user-directed switch to incremental Quartus builds as the normal build method going forward.
+
+#### Outcome:
+
+The user reports that the complete compact D3 MiSTer matrix passes on official executable source `149c5be35d3384ab195ff92738549bd5c04a1f77`: both supported FLAC anchors, repeated unsupported 24-bit clean reject followed by supported reload, reset/re-arm, all four D2 Audio Test modes, and standing MPEG/video regressions.
+
+Build-results commit `b67e2b971aea7d334d1b7e985aa2532f25eb868f` (`149c5be build update`) fits successfully with Quartus Prime 17.0.2 Build 602 on `5CSEBA6U23I7`: 32,304 ALMs, 44,621 registers, 472,117 block-memory bits in 76 RAM blocks, 68 DSPs, and 3 PLLs. The intended embedded-memory mailbox change therefore adds one RAM block relative to the prior D3 fit while slightly reducing ALM/register use.
+
+D3 timing is fully closed. `general[2]` setup is +1.490 ns with endpoint TNS 0, recovery is +15.406 ns with endpoint TNS 0, hold remains nonnegative with +0.203 ns worst reported slack, removal is +0.547 ns on `general[2]`, and minimum pulse width remains +0.462 ns. The standing `phase1p_decoder_setup.rpt` and `phase1p_decoder_setup_compact.tsv` are both present and current. The compact report no longer contains the former `audio_control_src_fifo` cross-clock failure; its Slow 100C worst 54->54 path is now +1.490 ns, and the Slow -40C focused worst path is also positive at +0.444 ns. The former -0.056 ns MPEG same-clock path is therefore no longer a D3 blocker.
+
+Result cleanup is complete in `3b1a62c3811563e0039dae28156958fc982ec18c`, whose tree is executable-source-equivalent to `149c5be` with generated `output_files/` and `phase1p_timing_reports/` results removed. Current MiSTer-Media-Player functional source is `912a87494a30ae6f5d3dfb1320f8bf3b558430b4` (`Generalize restricted P/B slices`), latest metadata tip `6acf253f9a91f25988a223440faedea07baecd87`; its current changes are confined to MPEG P/B slice handling and a deterministic test-stream generator and create no immediate Audio top-level, FLAC, or SDC conflict.
+
+D3 is closed. The approved D4 boundary is deliberately narrow: modify only `rtl/audio/audio_flac_constant_decoder.sv` and `tools/streams/verify_d3_flac_constant.py` to add the existing deterministic D1 `flac_06_lfsr_48000` case as the first non-CONSTANT hardware target. That stream is 16-bit mono 48 kHz, 8192 samples in two 4096-sample independent-channel VERBATIM subframes, FLAC SHA-256 `72ef391157b6283e197484613a9a1447426d97e6c6aedfef0a9de021f27b6e21`, and golden PCM SHA-256 `4c05215da81e4ebab72d8b6ab6db43643a5333e776d7e638646213128a858d46`. RFC 9639 defines VERBATIM as unencoded sequential samples, making this a bounded next syntax step without introducing FIXED predictors, Rice residual coding, LPC, or stereo decorrelation.
+
+Preserve the D3 frame-integrity contract: a VERBATIM frame must not expose PCM until its complete frame CRC-16 validates. Preserve D3 CONSTANT support, terminal drain, unsupported/error semantics, F2 transport, PCM/output path, Audio control CDC, clocks, QIP, PLL, MPEG/video logic, and `MediaPlayer.sdc`. Do not add FIXED, Rice, LPC, mid/side, right-side, 24-bit, metadata expansion, or broader sample-rate/channel support in this boundary.
+
+The user explicitly approved this D4 boundary and directed that incremental Quartus builds be used going forward. Incremental compile/fit is therefore the normal validation path; do not delete `db/` or `incremental_db/` before routine builds. A clean rebuild is a diagnostic fallback only if incremental evidence is stale/inconsistent, the fit database is invalidated, or the observed result cannot be trusted. Each build must still regenerate/update the standard timing evidence, including `phase1p_decoder_setup.rpt` and `phase1p_decoder_setup_compact.tsv`.
+
+#### Next Steps:
+
+Implement only the approved two-file D4 VERBATIM boundary and commit it as the next official executable hash. Run `python3 tools/streams/verify_d3_flac_constant.py`, then perform the normal incremental `quartus_sh --flow compile MediaPlayer` followed by `quartus_sta -t tools/phase1p_timing.tcl`. Require all setup/recovery/hold/removal/minimum-pulse timing to remain nonnegative with zero endpoint TNS where applicable, verify both standing decoder reports are current, and report resource deltas. On MiSTer use the compact matrix: D4 `flac_06_lfsr_48000` audible decode/USER success; both D3 CONSTANT anchors; unsupported 24-bit x3 then supported reload; reset then D4 reload; all four D2 Audio Test modes; standing MPEG/F1 regressions.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — D3 `149c5be` build accepted with fully closed timing and complete hardware regression pass
+- [x] Passed — D3 closed; bounded D4 VERBATIM implementation explicitly approved and released for implementation
+
+---
