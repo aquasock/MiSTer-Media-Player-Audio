@@ -586,3 +586,47 @@ Await explicit user approval. If approved, implement only the `tools/phase1p_tim
 - [ ] Passed — D3 remains open because global 54 MHz setup is -1.700 ns / -8.318 ns TNS; detailed path localization awaits approval
 
 ---
+## 017 COMMIT D3 a50fb2e 2026-08-16T17:09:00-07:00
+
+#### Coming From:
+
+D3 a50fb2e
+
+#### Purpose:
+
+Accept the approved D3 setup-path diagnostic evidence, establish the two new decoder setup reports as standing build evidence, complete result cleanup and current-main compatibility review, and define the smallest corrective boundary for the dominant Audio mailbox timing failure before changing executable source.
+
+#### Outcome:
+
+Diagnostic source commit `a50fb2e14ed6f4d2f2499059858d9f38299926a9` changes only `tools/phase1p_timing.tcl`; the subsequent build-results commit `fa408b9d00fc809491eafae5573d5330bbda20d3` reproduces the `a5d7606` executable resource shape exactly: 32,308 ALMs, 44,647 registers, 472,097 block-memory bits in 75 RAM blocks, 68 DSPs, and 3 PLLs. The diagnostic therefore does not alter the FPGA executable.
+
+The user supplied `phase1p_decoder_setup.rpt` and `phase1p_decoder_setup_compact.tsv` after the standard upload and has designated both as standard build evidence going forward. The compact report contains 50 worst setup paths for each of four operating corners. Future result review must flag either file if it is missing, stale relative to the current build, or inconsistent with the other timing evidence.
+
+The new evidence localizes the global `general[2]` setup failure. The worst path is -1.700 ns from `general[0]` / 20 MHz to `general[2]` / 54 MHz entirely inside `audio_control_src_fifo`, from `...fifo_ram|ram_block[4]` to `...fifo_ram|rd_data_out_latch[4]`; the next worst paths are the same mailbox structure on other data bits. This cross-clock cluster is the dominant contributor to the existing -8.318 ns endpoint TNS. The mailbox is the 4-word x 8-bit `dcfifo` introduced by `a5d7606` and is explicitly instantiated with `USE_EAB="OFF"`, forcing its storage into logic-cell implementation rather than embedded memory.
+
+Recovery remains clean at +15.459 ns / zero endpoint TNS. Hold remains positive at +0.242 ns, removal at +0.574 ns, and minimum pulse width at +0.462 ns. The diagnostic also exposes a separate small true 54->54 MPEG path: the decoder same-clock report has 22/100 violated paths with -0.056 ns worst slack, from the B bidirectional raster engine `selected_luma_mvx[3]~222_OTERM11274` path into `out_reg[7]` endpoints. This secondary MPEG path is not the cause of the -1.700 ns global failure and is intentionally not combined with the Audio mailbox correction.
+
+Official Quartus 17.0 guidance identifies `dcfifo` as a dual-clock FIFO for clock-domain crossing and documents that `USE_EAB="OFF"` forces logic-cell storage, while embedded-memory implementation is the normal memory implementation. The next correction therefore should change implementation rather than add a broad timing exception. No `set_clock_groups`, clock-domain-wide false path, or other SDC suppression is proposed.
+
+Current MiSTer-Media-Player functional source is `338c2f8bb868cd0e8a7d4bf01ac7961a06231d33` (`Pipeline B macroblock address apply`), with latest metadata tip `aee218b78e07ca8791b06e1210ecc426a78d9653`. Its timing correction pipelines a different B macroblock-address path and closes that project's 54 MHz timing at +0.823 ns / zero TNS. It changes only `rtl/mpeg2_new/mpeg2_h262_b_core_probe_part0.svh` and `rtl/mpeg2_new/mpeg2_h262_b_core_probe_part3.svh`; it does not touch the Audio mailbox, `MediaPlayer_top_00.svh`, or `MediaPlayer.sdc`. No immediate main-project conflict blocks the proposed Audio correction.
+
+Current-workflow cleanup is complete in `c39ffdb772ed21beb68105bfd62087624516b7b2` (`(a50fb2e) clear build results`), which removes the generated `output_files/` and `phase1p_timing_reports/` contents and also removes the accidental temporary `.gitkeep`, restoring the repository tree to the diagnostic source state before this metadata record.
+
+Proposed source boundary: modify only `MediaPlayer_top_00.svh`, changing only the 8-bit `audio_control_src_fifo` instance from `.use_eab("OFF")` to `.use_eab("ON")`. Preserve its depth, width, show-ahead behavior, reset synchronization, pointer synchronization, write/read logic, event semantics, and the separate one-bit `audio_restart_out_fifo`. Do not change `MediaPlayer.sdc`, QIP, PLL configuration, FLAC decoder, PCM path, MPEG/video logic, or any other source. The intent is to move the offending mailbox storage out of the LE-based implementation rather than hide the observed path with a timing exception.
+
+Validation after approval: run the D3 deterministic verifier, perform a clean Quartus compile and `tools/phase1p_timing.tcl`, and require the -1.700 ns `audio_control_src_fifo` RAM-to-read-latch cross-clock cluster to disappear from setup failures without recovery/hold/removal/minimum-pulse regression. Inspect both standing decoder reports on every build. If the separate -0.056 ns 54->54 MPEG path remains negative after the fitter is no longer optimizing against the mailbox crossing, stop and prepare a separate evidence-based MPEG timing boundary rather than widening this Audio correction. Because `MediaPlayer_top_00.svh` changes synthesized implementation, repeat the full D3 MiSTer matrix before accepting the source: both supported FLAC anchors, repeated unsupported 24-bit clean reject followed by supported reload, reset/re-arm, all four D2 Audio Test modes, and standing MPEG/video regressions. A small RAM-block increase is acceptable and must be reported against the D0/D3 resource baselines.
+
+#### Next Steps:
+
+Await explicit user approval. If approved, make only the `audio_control_src_fifo` `USE_EAB` change in `MediaPlayer_top_00.svh` and commit it as the next D3 executable build hash. Do not add an SDC exception or address the separate MPEG same-clock path in this boundary.
+
+#### Files Modified:
+
+- `.ai/core-log.md`
+
+#### Status:
+
+- [x] Built — diagnostic-only `a50fb2e` build reproduces the accepted D3 executable resources and localizes the dominant setup failure
+- [ ] Passed — D3 remains open; proposed one-line Audio mailbox implementation correction awaits explicit user approval
+
+---
