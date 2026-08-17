@@ -314,7 +314,7 @@ dcfifo #(
 	.lpm_widthu           (2),
 	.overflow_checking    ("ON"),
 	.underflow_checking   ("ON"),
-	.use_eab              ("OFF"),
+	.use_eab              ("ON"),
 	.rdsync_delaypipe     (4),
 	.wrsync_delaypipe     (4),
 	.write_aclr_synch     ("ON"),
